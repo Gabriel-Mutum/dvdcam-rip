@@ -27,11 +27,16 @@ Found 12 recordings, 22m38s in total, 983.4 MB:
     3     1m59s    86.2 MB      1.3  Recording 03 (1m59s).mp4
     ...
 
-Output folder: C:\Users\you\Downloads\dvdcam-rip\Video Camera
-The video is copied without re-encoding, so the quality is exactly the same as the disc.
-The original disc files are only read, never changed.
+Does this look right? Convert 12 recordings? [Y/n] y
 
-Does this look right? Convert 12 recordings now? [Y/n]
+Which format?
+  1  Original (MPEG-2)  Exact copy of the disc, done in seconds. Won't play on iPhone/Mac.
+  2  H.264              Plays everywhere, iPhone included. Re-encoded (looks the same), takes minutes.
+Choose 1 or 2 [1]: 1
+
+Output folder: C:\Users\you\Downloads\dvdcam-rip\Video Camera
+Format: original MPEG-2. The video is copied as-is, the exact quality of the disc.
+The original disc files are only read, never changed.
 
 [ 3/12] Recording 03 (1m59s).mp4  done  84.4 MB  (0.7s)
 ...
@@ -40,6 +45,19 @@ Finished in 10s: 12 converted.
 Your videos are in:
   C:\Users\you\Downloads\dvdcam-rip\Video Camera
 ```
+
+Answering **n** writes nothing and suggests how to look closer (`--list --split cell`) or pick recordings (`--only`).
+
+## Which format?
+
+| | Original (MPEG-2) | H.264 |
+|---|---|---|
+| Quality | Bit-identical to the disc | Re-encoded at visually transparent quality (measured SSIM 0.98, PSNR 43 dB) |
+| Plays on | VLC, Windows, Android, most TVs | Everything, including iPhone, iPad, Mac and messaging apps |
+| Speed | Seconds per disc | Minutes per disc (about 3× real time on a 16-thread PC) |
+| Picture | 704×480 interlaced, as recorded | Deinterlaced to smooth 59.94 fps, square pixels (640×480 for 4:3), AAC audio |
+
+Keep the original as your master copy and make H.264 copies for sharing. Each format gets its own folder (`…\Video Camera` and `…\Video Camera (H.264)`), and the tool never mixes them in one folder.
 
 ## Command line
 
@@ -50,14 +68,15 @@ dvdcam-rip "D:\" --list                 # only list the recordings
 dvdcam-rip "D:\" --dry-run              # show what would be created
 dvdcam-rip "D:\" --only 3,5-7           # convert some recordings
 dvdcam-rip "D:\" -o "E:\Home videos"    # choose the output folder
-dvdcam-rip "D:\" --yes --open           # no question; open the folder at the end
+dvdcam-rip "D:\" --format h264          # skip the format question
+dvdcam-rip "D:\" --yes --open           # no questions (original format); open the folder at the end
 ```
 
 Other options: `--overwrite`, `--split chapter|vob|cell`, `--ffmpeg PATH`, `--quiet`, `--verbose`, `--json` (with `--list`). See `dvdcam-rip --help`.
 
 ## Where the files go
 
-`Downloads\dvdcam-rip\<disc name>\`, where the disc name is the copied folder's name (or the DVD's volume label). That folder also gets:
+`Downloads\dvdcam-rip\<disc name>\` (or `<disc name> (H.264)\`), where the disc name is the copied folder's name (or the DVD's volume label). That folder also gets:
 
 - `recordings.csv`: every file with its length, size, source chapter and status.
 - `dvdcam-rip.log`: technical details (FFmpeg commands and messages) for troubleshooting.
@@ -71,14 +90,14 @@ Other options: `--overwrite`, `--split chapter|vob|cell`, `--ffmpeg PATH`, `--qu
 
 ## How it works
 
-See [docs/research.md](docs/research.md). In short: the IFO lists every recording's cells and their sectors. The camera restarts the timestamps at every cell, so dvdcam-rip shifts each cell's timestamps to follow on from the previous one, using the cell timings in the disc's NAV packs (as a DVD player does), then lets FFmpeg copy the streams into MP4 with `-c copy`. LPCM audio, which MP4 can't hold as-is, is stored as FLAC (also lossless).
+See [docs/research.md](docs/research.md). In short: the IFO lists every recording's cells and their sectors. The camera restarts the timestamps at every cell, so dvdcam-rip shifts each cell's timestamps to follow on from the previous one, using the cell timings in the disc's NAV packs (as a DVD player does), then lets FFmpeg copy the streams into MP4 with `-c copy`. The MP4 is written without an edit list, because FFmpeg's default one would hide the two frames camcorders place before each recording's first keyframe. LPCM audio, which MP4 can't hold as-is, is stored as FLAC (also lossless).
 
-The MP4s contain the camera's original MPEG-2 video. VLC, Windows, Android and most TVs play it. Apple's QuickTime/Photos don't play MPEG-2.
+The H.264 mode feeds the same stitched stream to FFmpeg with `bwdif` deinterlacing (one frame per field), square-pixel scaling, `libx264 -preset medium -crf 18` and AAC 192 kb/s.
 
 ## Status
 
-- Finalized DVD-Video discs: working, verified frame-for-frame on a Hitachi DZ-MV750MA disc.
-- Not yet: DVD-VR discs (`DVD_RTAV`), unfinalized discs, ISO images (mount them first), recording dates in file names, an optional H.264 mode for Apple devices.
+- Finalized DVD-Video discs: working, in both formats. The original mode is verified frame-for-frame on a Hitachi DZ-MV750MA disc.
+- Not yet: DVD-VR discs (`DVD_RTAV`), unfinalized discs, ISO images (mount them first), recording dates in file names.
 
 ## Development
 

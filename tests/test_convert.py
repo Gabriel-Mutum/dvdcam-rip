@@ -115,6 +115,9 @@ class PlanningTests(unittest.TestCase):
 
 
 class CliFlowTests(unittest.TestCase):
+    """The interactive flow: list -> "does this look right?" -> format -> convert.
+    FFmpeg is mocked: fake outputs contain the name of their format."""
+
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.tmp = Path(self._tmp.name)
@@ -123,24 +126,36 @@ class CliFlowTests(unittest.TestCase):
     def tearDown(self):
         self._tmp.cleanup()
 
-    def run_cli(self, *args, answer=None):
+    def run_cli(self, *args, answers=None, output=True):
+        def fake_convert(job, *a, fmt="original", **k):
+            job.status = "done"
+            job.path.write_text(fmt)
+
+        def fake_existing(tools, path):
+            return path.read_text()
+
         fake_tools = mock.Mock(version="test", ffmpeg=Path("ffmpeg"))
         buf = io.StringIO()
+        out_args = ["-o", str(self.tmp / "out")] if output else []
         with (
             mock.patch.object(cli, "find_tools", return_value=fake_tools),
+            mock.patch.object(cli, "has_encoder", return_value=True),
+            mock.patch.object(cli, "existing_format", side_effect=fake_existing),
+            mock.patch.object(cli, "default_output", side_effect=lambda d, f: self.tmp / f"default-{f}"),
             mock.patch.object(cli.sys.stdin, "isatty", return_value=True),
-            mock.patch("builtins.input", side_effect=answer or EOFError),
-            mock.patch.object(cli, "convert_one") as convert,
+            mock.patch("builtins.input", side_effect=answers or EOFError),
+            mock.patch.object(cli, "convert_one", side_effect=fake_convert) as convert,
             redirect_stdout(buf),
         ):
-            code = cli.main([str(self.tmp / "disc"), "-o", str(self.tmp / "out"), *args])
+            code = cli.main([str(self.tmp / "disc"), *out_args, *args])
         return code, buf.getvalue(), convert
 
-    def test_declining_writes_nothing(self):
-        code, out, convert = self.run_cli(answer=["n"])
+    def test_declining_gives_feedback_and_writes_nothing(self):
+        code, out, convert = self.run_cli(answers=["n"])
         self.assertEqual(code, 0)
         self.assertIn("Found 3 recordings", out)  # the list is shown before asking
-        self.assertIn("Cancelled", out)
+        self.assertIn("nothing was converted", out)
+        self.assertIn("--split cell", out)
         convert.assert_not_called()
         self.assertFalse((self.tmp / "out").exists())
 
@@ -149,39 +164,42 @@ class CliFlowTests(unittest.TestCase):
         self.assertEqual(code, 2)
         convert.assert_not_called()
 
-    def test_dry_run(self):
+    def test_dry_run_asks_nothing(self):
         code, out, convert = self.run_cli("--dry-run")
         self.assertEqual(code, 0)
-        self.assertIn("Recording 01", out)
         self.assertIn("Dry run", out)
         convert.assert_not_called()
 
-    def test_accepting_converts_and_reports(self):
-        def fake_convert(job, *a, **k):
-            job.status = "done"
-            job.path.write_bytes(b"x")
-
-        fake_tools = mock.Mock(version="test", ffmpeg=Path("ffmpeg"))
-        buf = io.StringIO()
-        with (
-            mock.patch.object(cli, "find_tools", return_value=fake_tools),
-            mock.patch.object(cli.sys.stdin, "isatty", return_value=True),
-            mock.patch("builtins.input", side_effect=["y"]),
-            mock.patch.object(cli, "convert_one", side_effect=fake_convert),
-            redirect_stdout(buf),
-        ):
-            code = cli.main([str(self.tmp / "disc"), "-o", str(self.tmp / "out")])
-        out = buf.getvalue()
+    def test_yes_then_original(self):
+        code, out, convert = self.run_cli(answers=["y", ""])  # Enter = 1, original
         self.assertEqual(code, 0)
         self.assertIn("3 converted", out)
-        self.assertIn(str(self.tmp / "out"), out)
+        self.assertEqual(convert.call_args.kwargs["fmt"], "original")
         self.assertTrue((self.tmp / "out" / "recordings.csv").exists())
         self.assertTrue((self.tmp / "out" / "dvdcam-rip.log").exists())
 
-        # running again skips everything
-        code, out, convert = self.run_cli("--yes")
+        code, out, convert = self.run_cli("--yes")  # running again skips everything
         self.assertIn("Nothing to do", out)
         convert.assert_not_called()
+
+    def test_yes_then_h264_uses_its_own_folder(self):
+        code, out, convert = self.run_cli(answers=["y", "x", "2"], output=False)
+        self.assertEqual(code, 0)
+        self.assertEqual(convert.call_args.kwargs["fmt"], "h264")
+        self.assertIn("Format: H.264", out)
+        self.assertEqual(len(list((self.tmp / "default-h264").glob("*.mp4"))), 3)
+
+    def test_format_flag_skips_the_question(self):
+        code, out, convert = self.run_cli("--format", "h264", answers=["y"])
+        self.assertEqual(code, 0)
+        self.assertEqual(convert.call_args.kwargs["fmt"], "h264")
+
+    def test_other_format_in_folder_is_not_skipped_or_overwritten(self):
+        self.run_cli("--yes")  # originals into out/
+        code, out, convert = self.run_cli("--yes", "--format", "h264")
+        self.assertEqual(code, 2)
+        convert.assert_not_called()
+        self.assertEqual((self.tmp / "out" / "Recording 01 (13s).mp4").read_text(), "original")
 
 
 if __name__ == "__main__":

@@ -71,6 +71,18 @@ All measured on a 9-cell recording (3,571 video frames in the raw cell bytes):
 
 On the whole disc, all 12 outputs matched the source packet-for-packet (40,735 frames). The cells tile the VOB from sector 0 to the end with no gaps.
 
+### MP4 edit list hides the leading B-frames
+
+FFmpeg's MP4 muxer starts the track's edit list at the first stored sample's composition time. Here the first sample is the I-frame, and the two B-frames that display before it are marked as discarded (`_D_`). The packets were in the file, but players skipped them (3,568 frames shown of 3,571 stored). Writing with `-use_editlist 0` shows them, at the cost of moving the video by under 10 ms against the audio. After the fix each file shows exactly as many frames as decoding the raw disc bytes does (one fewer than stored, which is a property of the camera's stream).
+
+## H.264 mode
+
+`bwdif=mode=send_field:deint=interlaced` → `scale=trunc(iw*sar/2)*2:ih` (square pixels) → `libx264 -preset medium -crf 18`, AAC 192k, `-fps_mode passthrough`.
+
+- On the 2-minute test recording, `slow` took 65 s and `medium` 36 s, for nearly the same size (45.5 vs 46.5 MB). `medium` is used.
+- Quality against the same deinterlaced and scaled source: SSIM 0.979, PSNR 43.4 dB on average (minimum 37.5).
+- Without `-fps_mode passthrough`, MP4's constant-frame-rate mode duplicated frames at the start.
+
 ## Open questions (need real discs)
 
 1. **Recording date and time.** DVD-Video has no standard field for it. Brands hide it in vendor-specific places (private streams, MPEG user data, or DV-style packs in the NAV/RDI data). Goal: name files `2007-08-14_15-32-10.mp4` and write `creation_time` metadata. Needs sample discs from each brand.

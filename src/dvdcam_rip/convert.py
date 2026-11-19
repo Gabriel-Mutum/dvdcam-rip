@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from .ffmpeg import Tools, probe, remux_command
+from .ffmpeg import Tools, encode_command, probe, remux_command
 from .ifo import Disc
 from .recordings import Recording
 from .vob import TitleVobs, cell_timing, recording_duration, stitched_stream
@@ -86,8 +86,24 @@ def disc_name(disc: Disc) -> str:
     return safe_name(label) if label else "DVD " + datetime.now().strftime("%Y-%m-%d")
 
 
-def default_output(disc: Disc) -> Path:
-    return downloads_folder() / "dvdcam-rip" / disc_name(disc)
+# Output formats: "original" copies the camera's MPEG-2 untouched; "h264"
+# re-encodes for devices that can't play MPEG-2.
+FORMATS = ("original", "h264")
+VIDEO_CODEC = {"original": "mpeg2video", "h264": "h264"}
+
+
+def default_output(disc: Disc, fmt: str = "original") -> Path:
+    name = disc_name(disc) + (" (H.264)" if fmt == "h264" else "")
+    return downloads_folder() / "dvdcam-rip" / name
+
+
+def existing_format(tools: Tools, path: Path) -> str | None:
+    """Which format an existing output file is in ("original"/"h264"), or None."""
+    try:
+        codec = probe(tools, path, count=False).video_codec
+    except (RuntimeError, OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+    return next((f for f, c in VIDEO_CODEC.items() if c == codec), None)
 
 
 def check_output_location(output: Path, disc: Disc) -> None:
@@ -193,6 +209,7 @@ def convert_one(
     progress: Progress,
     metadata: dict[str, str],
     verbose_cmd: Callable[[list[str]], None] | None = None,
+    fmt: str = "original",
 ) -> None:
     rec = job.recording
     vts = disc.title_sets[rec.vts]
@@ -204,7 +221,10 @@ def convert_one(
 
     if job.part.exists():
         job.part.unlink()  # our own leftover from an interrupted run
-    cmd = remux_command(tools, job.part, [a.codec for a in vts.audio], metadata)
+    if fmt == "h264":
+        cmd = encode_command(tools, job.part, metadata)
+    else:
+        cmd = remux_command(tools, job.part, [a.codec for a in vts.audio], metadata)
     log.write(f"{job.path.name}: title {rec.title} chapter {rec.chapter}, {len(rec.cells)} cells, "
               f"sectors {rec.first_sector}-{rec.last_sector}, expected {expected:.3f}s")
     log.write("command: " + subprocess.list2cmdline(cmd))
@@ -249,6 +269,8 @@ def convert_one(
     problems = []
     if result.video_frames == 0:
         problems.append("no video in the output")
+    elif result.video_codec != VIDEO_CODEC[fmt]:
+        problems.append(f"video is {result.video_codec}, expected {VIDEO_CODEC[fmt]}")
     if vts.audio and result.audio_streams == 0:
         problems.append("no audio in the output")
     tolerance = max(0.5, expected * 0.01)

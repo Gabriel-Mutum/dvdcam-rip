@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dvdcam-rip"
-version = "0.1.0"
+version = "0.2.0"
 description = "Split DVD camcorder discs (IFO/VOB, DVD-VR) into one lossless file per recording"
 readme = "README.md"
 requires-python = ">=3.11"

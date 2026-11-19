@@ -12,12 +12,14 @@ from pathlib import Path
 
 from . import __version__
 from .convert import (
+    FORMATS,
     SPACE_MARGIN,
     Job,
     Log,
     check_output_location,
     convert_one,
     default_output,
+    existing_format,
     free_space,
     open_folder,
     parse_only,
@@ -26,7 +28,7 @@ from .convert import (
     space_needed,
     write_report,
 )
-from .ffmpeg import FfmpegMissing, find_tools
+from .ffmpeg import FfmpegMissing, find_tools, has_encoder
 from .ifo import Disc, IfoError, read_disc
 from .recordings import SPLIT_MODES, Recording, list_recordings
 from .vob import VobError
@@ -50,6 +52,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dry-run", action="store_true", help="show what would be created, then stop")
     p.add_argument("--only", metavar="N", help="convert only these recordings, e.g. 3 or 1,4-6")
     p.add_argument("-y", "--yes", action="store_true", help="don't ask for confirmation")
+    p.add_argument("--format", choices=FORMATS,
+                   help="original = exact MPEG-2 copy; h264 = re-encoded to play everywhere "
+                        "(default: ask, or original with --yes)")
     p.add_argument("--overwrite", action="store_true", help="replace files that already exist (default: skip them)")
     p.add_argument("--open", action="store_true", help="open the output folder when finished")
     p.add_argument("--split", choices=SPLIT_MODES, default="chapter",
@@ -121,14 +126,13 @@ def describe_disc(ui: Ui, disc: Disc) -> None:
         ui.say(f"Audio:   {audio or 'none'}")
 
 
-def print_table(ui: Ui, jobs: list[Job], show_status: bool) -> None:
+def print_table(ui: Ui, jobs: list[Job]) -> None:
     ui.always(f"  {'#':>3}  {'Length':>8}  {'Size':>9}  {'Chapter':>7}  File")
     for j in jobs:
         r = j.recording
-        status = "  (already converted, will skip)" if show_status and j.path.exists() else ""
         ui.always(
             f"  {r.index:>3}  {short_duration(r.duration_seconds):>8}  {fmt_size(r.size_bytes):>9}"
-            f"  {f'{r.title}.{r.chapter}':>7}  {j.path.name}{status}"
+            f"  {f'{r.title}.{r.chapter}':>7}  {j.path.name}"
         )
         if ui.verbose:
             vobs = ",".join(str(v) for v in r.vob_ids)
@@ -184,6 +188,32 @@ def ask(question: str) -> bool:
         print("Please answer y or n.")
 
 
+FORMAT_MENU = """
+Which format?
+  1  Original (MPEG-2)  Exact copy of the disc, done in seconds. Won't play on iPhone/Mac.
+  2  H.264              Plays everywhere, iPhone included. Re-encoded (looks the same), takes minutes.
+"""
+
+
+def ask_format() -> str:
+    print(FORMAT_MENU, end="")
+    while True:
+        answer = input("Choose 1 or 2 [1]: ").strip()
+        if answer in ("", "1"):
+            return "original"
+        if answer == "2":
+            return "h264"
+        print("Please type 1 or 2.")
+
+
+def print_declined(ui: Ui, source: str) -> None:
+    ui.always("\nOK, nothing was converted and no files were written.")
+    ui.always("If the list isn't what you expected:")
+    ui.always(f'  - see every piece of the disc:  dvdcam-rip "{source}" --list --split cell')
+    ui.always(f'  - convert only some of them:    dvdcam-rip "{source}" --only 3,5-7')
+    ui.always("  - report a problem:             https://github.com/Gabriel-Mutum/dvdcam-rip/issues")
+
+
 # ------------------------------------------------------------------ main
 
 
@@ -215,9 +245,6 @@ def main(argv: list[str] | None = None) -> int:
             return EXIT_INPUT
         recordings = [r for r in all_recordings if r.index in wanted]
 
-    output = Path(args.output).expanduser() if args.output else default_output(disc)
-    jobs = plan_jobs(recordings, len(all_recordings), output)
-
     # 2. Show what was found
     ui.say(f"dvdcam-rip {__version__}\n")
     describe_disc(ui, disc)
@@ -227,17 +254,11 @@ def main(argv: list[str] | None = None) -> int:
     if not ui.quiet or args.list or not args.yes:  # the table is what the user confirms
         ui.always(f"\nFound {len(recordings)} recordings{picked}, {short_duration(total_len)} in total, "
                   f"{fmt_size(total_size)}:\n")
-        print_table(ui, jobs, show_status=not args.list and not args.overwrite)
+        print_table(ui, plan_jobs(recordings, len(all_recordings), Path(".")))
 
     if args.list:
         return EXIT_OK
 
-    # 3. Check we can do the work before asking
-    try:
-        check_output_location(output, disc)
-    except ValueError as e:
-        ui.error(str(e))
-        return EXIT_INPUT
     try:
         tools = find_tools(args.ffmpeg)
     except FfmpegMissing as e:
@@ -245,19 +266,70 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_NO_FFMPEG
     ui.detail(f"\nUsing FFmpeg {tools.version}: {tools.ffmpeg}")
 
-    todo = [j for j in jobs if args.overwrite or not j.path.exists()]
+    # 3. Ask: does the list look right, and which format?
+    interactive = not args.yes and not args.dry_run
+    if interactive and not sys.stdin.isatty():
+        ui.error("not asking for confirmation without a terminal; add --yes to convert")
+        return EXIT_INPUT
+    fmt = args.format or "original"
+    try:
+        if interactive:
+            n = len(recordings)
+            if not ask(f"\nDoes this look right? Convert {n} recording{'s' if n != 1 else ''}?"):
+                print_declined(ui, args.source)
+                return EXIT_OK
+            if not args.format:
+                fmt = ask_format()
+    except KeyboardInterrupt:
+        ui.always("\nCancelled. Nothing was written.")
+        return EXIT_INTERRUPTED
+    except EOFError:
+        ui.always("\nNo answer was given, so nothing was written. Add --yes to convert without asking.")
+        return EXIT_INPUT
+
+    if fmt == "h264" and not has_encoder(tools, "libx264"):
+        ui.error("this FFmpeg build has no H.264 encoder (libx264); install the full build: "
+                 "winget install Gyan.FFmpeg")
+        return EXIT_NO_FFMPEG
+
+    # 4. Work out the output and check it
+    output = Path(args.output).expanduser() if args.output else default_output(disc, fmt)
+    try:
+        check_output_location(output, disc)
+    except ValueError as e:
+        ui.error(str(e))
+        return EXIT_INPUT
+    jobs = plan_jobs(recordings, len(all_recordings), output)
+
+    clashes = []
+    for j in jobs:
+        if j.path.exists() and not args.overwrite:
+            found = existing_format(tools, j.path)
+            if found == fmt:
+                j.status = "skipped"
+            else:
+                clashes.append(j.path.name)
+    if clashes:
+        ui.error(f"{len(clashes)} file(s) in {output} already exist in a different format "
+                 f"(e.g. {clashes[0]}). Choose another folder with -o, or replace them with --overwrite.")
+        return EXIT_INPUT
+
+    todo = [j for j in jobs if j.status != "skipped"]
     ui.always(f"\nOutput folder: {output}")
     if len(todo) < len(jobs):
         ui.always(f"{len(jobs) - len(todo)} already converted and will be skipped "
                   "(use --overwrite to redo them).")
-    ui.say("The video is copied without re-encoding, so the quality is exactly the same as the disc.")
+    if fmt == "h264":
+        ui.say("Format: H.264. The video is re-encoded (deinterlaced to smooth 60 fps, AAC audio).")
+    else:
+        ui.say("Format: original MPEG-2. The video is copied as-is, the exact quality of the disc.")
     ui.say("The original disc files are only read, never changed.")
 
     if not todo:
         ui.always("\nNothing to do: every recording is already converted.")
         return EXIT_OK
 
-    needed = space_needed(jobs, args.overwrite)
+    needed = space_needed(todo, overwrite=True)
     free = free_space(output)
     if needed + SPACE_MARGIN > free:
         ui.error(f"not enough free space in {output.anchor or output}: "
@@ -267,24 +339,6 @@ def main(argv: list[str] | None = None) -> int:
     if args.dry_run:
         ui.always("\nDry run: nothing was written.")
         return EXIT_OK
-
-    # 4. Confirm
-    if not args.yes:
-        if not sys.stdin.isatty():
-            ui.error("not asking for confirmation without a terminal; add --yes to convert")
-            return EXIT_INPUT
-        try:
-            ok = ask(f"\nDoes this look right? Convert {len(todo)} recording"
-                     f"{'s' if len(todo) != 1 else ''} now?")
-        except KeyboardInterrupt:
-            ui.always("\nCancelled. Nothing was written.")
-            return EXIT_INTERRUPTED
-        except EOFError:
-            ui.always("\nNo answer was given, so nothing was written. Add --yes to convert without asking.")
-            return EXIT_INPUT
-        if not ok:
-            ui.always("Cancelled. Nothing was written.")
-            return EXIT_OK
 
     # 5. Convert
     try:
@@ -303,15 +357,15 @@ def main(argv: list[str] | None = None) -> int:
     try:
         for n, job in enumerate(jobs, start=1):
             prefix = f"[{n:>{width}}/{len(jobs)}] {job.path.name}"
-            if job.path.exists() and not args.overwrite:
-                job.status = "skipped"
+            if job.status == "skipped":
                 job.note = "already converted"
                 ui.finish_line(prefix, "skipped (already converted)")
                 continue
+            how = "encoded to H.264" if fmt == "h264" else "copied"
             metadata = {
                 "title": job.path.stem,
                 "comment": f"{disc.vmg.provider or 'DVD camcorder'}; title {job.recording.title} "
-                           f"chapter {job.recording.chapter}; copied by dvdcam-rip {__version__}",
+                           f"chapter {job.recording.chapter}; {how} by dvdcam-rip {__version__}",
             }
             ui.progress(prefix, 0.0, force=True)
             try:
@@ -320,6 +374,7 @@ def main(argv: list[str] | None = None) -> int:
                     progress=lambda _j, f, p=prefix: ui.progress(p, f),
                     metadata=metadata,
                     verbose_cmd=(lambda c: ui.detail("\n" + subprocess.list2cmdline(c))) if args.verbose else None,
+                    fmt=fmt,
                 )
             except (VobError, OSError, RuntimeError) as e:
                 job.status = "failed"
