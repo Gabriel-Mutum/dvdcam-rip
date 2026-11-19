@@ -138,6 +138,7 @@ class TitleEntry:
 class Vmg:
     title_sets: int
     titles: list[TitleEntry]
+    provider: str = ""  # free text set by the recorder, e.g. "DZ-MV750MA (HITACHI)"
 
 
 def parse_vmg(data: bytes) -> Vmg:
@@ -160,7 +161,8 @@ def parse_vmg(data: bytes) -> Vmg:
                 vts_title=_u8(data, e + 7),
             )
         )
-    return Vmg(title_sets, titles)
+    provider = data[0x40:0x60].split(b"\0")[0].decode("ascii", "replace").strip()
+    return Vmg(title_sets, titles, provider)
 
 
 # ------------------------------------------------------------------ VTSI
@@ -176,6 +178,7 @@ class Cell:
     duration: Duration
     first_sector: int  # relative to the start of the title VOBs
     last_sector: int  # inclusive
+    last_vobu_sector: int  # start of the cell's last VOBU (its last NAV pack)
     seamless: bool
     stc_discontinuity: bool  # timestamps restart at this cell
 
@@ -250,6 +253,7 @@ def _parse_pgc(data: bytes, o: int, number: int, entry: bool, title: int) -> Pgc
                     duration=Duration.parse(data, p + 4),
                     first_sector=_u32(data, p + 8),
                     last_sector=_u32(data, p + 20),
+                    last_vobu_sector=_u32(data, p + 16),
                     seamless=bool(cat & 0x08),
                     stc_discontinuity=bool(cat & 0x02),
                 )

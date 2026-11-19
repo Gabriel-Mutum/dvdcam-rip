@@ -56,6 +56,20 @@ The default will be a lossless MP4 remux, with MKV as an option (needed for LPCM
 - Video is MPEG-2 **704×480** 4:3 (not 720), with AC-3 2.0 audio at 48 kHz.
 - Cell sector ranges in the IFO matched the NAV packs (`nv_pck_lbn`, VOB ID, cell ID) for all 99 cells. Following the `vobu_ea` links through the VOB ends exactly at the last cell's last sector.
 - No MPEG user data (`00 00 01 B2`) in the first VOBUs, so the recording date (if stored at all) isn't in the obvious place.
+- Each cell's timestamps restart at the same value (vobu_s_ptm ≈ 0.2145 s), and the first GOP of each cell is closed, starting I, B, B (the B-frames display before the I-frame).
+
+## Remux approach: tested options
+
+All measured on a 9-cell recording (3,571 video frames in the raw cell bytes):
+
+| Approach | Frames kept | Length | Notes |
+|---|---|---|---|
+| FFmpeg `dvdvideo` demuxer (`-title 1 -chapter_start N -chapter_end N`) | 3,569 | 119.05 s, exact timing | Drops the 2 leading B-frames of the recording's first closed GOP. `-trim 0` and `-preindex 1` don't help. It also logs libdvdread warnings about this IFO. |
+| Raw cell bytes piped to `-f mpeg` | 3,571 | 126.8 s | FFmpeg guesses at each timestamp reset and leaves gaps. |
+| One file per cell + concat demuxer | 3,571 | 119.87 s | Small gaps at each cell join. |
+| **Our stitching**: shift each cell's SCR/PTS/DTS by the NAV-pack timings, pipe to `-f mpeg`, `-c copy` | **3,571** | **119.14 s** | Video packets and audio identical to the source, no gaps, A/V in sync. **Used.** |
+
+On the whole disc, all 12 outputs matched the source packet-for-packet (40,735 frames). The cells tile the VOB from sector 0 to the end with no gaps.
 
 ## Open questions (need real discs)
 
@@ -63,7 +77,7 @@ The default will be a lossless MP4 remux, with MKV as an option (needed for LPCM
 2. **One title per clip vs. chapters per clip**: which pattern each brand uses.
 3. Whether any models split one recording across cells (e.g. at a VOB boundary or a seamless-branching point), so that a "recording" is really a program rather than a cell.
 
-## Plan
+## Plan (original)
 
 1. Collect disc images (ISO, or a copy of `VIDEO_TS`) into `samples/` (git-ignored).
 2. IFO parser + `--list`: show titles, programs, cells, durations and sector ranges.
