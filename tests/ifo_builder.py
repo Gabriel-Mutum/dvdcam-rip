@@ -167,4 +167,7 @@ def write_disc(root: Path, vts_specs: list[VtsSpec], titles: list[tuple[int, int
         (vt / f"{name}.BUP").write_bytes(data)
         if not bup_only:
             (vt / f"{name}.IFO").write_bytes(data)
+        # an empty (zero-filled) title VOB big enough for every cell
+        last = max(c.last for p in spec.pgcs for prog in p.programs for c in prog)
+        (vt / f"VTS_{i:02d}_1.VOB").write_bytes(bytes((last + 1) * SECTOR))
     return vt

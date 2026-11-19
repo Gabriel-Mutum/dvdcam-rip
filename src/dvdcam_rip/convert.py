@@ -26,9 +26,9 @@ from datetime import datetime
 from pathlib import Path
 
 from .ffmpeg import Tools, encode_command, probe, remux_command
-from .ifo import Disc
 from .recordings import Recording
-from .vob import TitleVobs, cell_timing, recording_duration, stitched_stream
+from .source import Media
+from .vob import cell_timing, plain_stream, recording_duration, stitched_stream
 
 SPACE_MARGIN = 100 * 1024 * 1024  # keep 100 MB free beyond the estimate
 
@@ -54,46 +54,14 @@ def downloads_folder() -> Path:
     return path if path.is_dir() else Path.home()
 
 
-def _volume_label(root: Path) -> str:
-    if os.name != "nt":
-        return ""
-    try:
-        import ctypes
-
-        buf = ctypes.create_unicode_buffer(261)
-        ok = ctypes.windll.kernel32.GetVolumeInformationW(  # type: ignore[attr-defined]
-            ctypes.c_wchar_p(root.anchor), buf, 261, None, None, None, None, 0
-        )
-        return buf.value.strip() if ok else ""
-    except (OSError, AttributeError):
-        return ""
-
-
-def safe_name(text: str) -> str:
-    text = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", text).strip(" .")
-    return text or "DVD"
-
-
-def disc_name(disc: Disc) -> str:
-    """A folder name for this disc: the copied folder's name, or the disc's
-    volume label when reading straight from a drive."""
-    folder = disc.root
-    if folder.name.upper() == "VIDEO_TS":
-        folder = folder.parent
-    if folder.name:  # a normal folder, e.g. "Video Camera"
-        return safe_name(folder.name)
-    label = _volume_label(folder)  # a drive root such as D:\
-    return safe_name(label) if label else "DVD " + datetime.now().strftime("%Y-%m-%d")
-
-
 # Output formats: "original" copies the camera's MPEG-2 untouched; "h264"
 # re-encodes for devices that can't play MPEG-2.
 FORMATS = ("original", "h264")
 VIDEO_CODEC = {"original": "mpeg2video", "h264": "h264"}
 
 
-def default_output(disc: Disc, fmt: str = "original") -> Path:
-    name = disc_name(disc) + (" (H.264)" if fmt == "h264" else "")
+def default_output(media: Media, fmt: str = "original") -> Path:
+    name = media.name + (" (H.264)" if fmt == "h264" else "")
     return downloads_folder() / "dvdcam-rip" / name
 
 
@@ -106,12 +74,14 @@ def existing_format(tools: Tools, path: Path) -> str | None:
     return next((f for f, c in VIDEO_CODEC.items() if c == codec), None)
 
 
-def check_output_location(output: Path, disc: Disc) -> None:
+def check_output_location(output: Path, media: Media) -> None:
+    if media.protect is None:
+        return
     out = output.resolve()
-    root = disc.root.resolve()
+    root = media.protect.resolve()
     if out == root or root in out.parents:
         raise ValueError(
-            f"the output folder {output} is inside the disc folder {disc.root}; "
+            f"the output folder {output} is inside the disc folder {media.protect}; "
             "choose a folder outside it so the original files stay untouched"
         )
 
@@ -126,8 +96,13 @@ def short_duration(seconds: float) -> str:
 
 
 def file_name(rec: Recording, count: int) -> str:
+    """"2007-08-14 15-32-10 (1m59s).mp4" when the disc has the recording date,
+    otherwise "Recording 03 (1m59s).mp4". The length is left out if unknown."""
+    length = f" ({short_duration(rec.duration_seconds)})" if rec.duration_seconds else ""
+    if rec.date:
+        return f"{rec.date:%Y-%m-%d %H-%M-%S}{length}.mp4"
     width = max(2, len(str(count)))
-    return f"Recording {rec.index:0{width}d} ({short_duration(rec.duration_seconds)}).mp4"
+    return f"Recording {rec.index:0{width}d}{length}.mp4"
 
 
 def parse_only(spec: str, count: int) -> list[int]:
@@ -166,7 +141,16 @@ class Job:
 
 
 def plan_jobs(recordings: list[Recording], total: int, output: Path) -> list[Job]:
-    return [Job(r, output / file_name(r, total)) for r in recordings]
+    jobs, used = [], set()
+    for r in recordings:
+        name = file_name(r, total)
+        stem, n = name[:-4], 2
+        while name.lower() in used:  # two recordings in the same second
+            name = f"{stem} #{n}.mp4"
+            n += 1
+        used.add(name.lower())
+        jobs.append(Job(r, output / name))
+    return jobs
 
 
 def space_needed(jobs: list[Job], overwrite: bool) -> int:
@@ -203,7 +187,7 @@ Progress = Callable[[Job, float], None]
 
 def convert_one(
     job: Job,
-    disc: Disc,
+    media: Media,
     tools: Tools,
     log: Log,
     progress: Progress,
@@ -212,21 +196,27 @@ def convert_one(
     fmt: str = "original",
 ) -> None:
     rec = job.recording
-    vts = disc.title_sets[rec.vts]
     started = time.monotonic()
-
-    vobs = TitleVobs(disc.root, rec.vts)
-    timings = [cell_timing(vobs, c) for c in rec.cells]
-    expected = recording_duration(timings)
+    reader = rec.reader
+    if reader is None:
+        raise RuntimeError("no data source for this recording")
+    if rec.stitch:
+        timings = [cell_timing(reader, c) for c in rec.cells]
+        expected: float | None = recording_duration(timings)
+        stream = stitched_stream(reader, timings)
+    else:
+        expected = rec.duration_seconds or None
+        stream = plain_stream(reader, rec.cells)
 
     if job.part.exists():
         job.part.unlink()  # our own leftover from an interrupted run
     if fmt == "h264":
         cmd = encode_command(tools, job.part, metadata)
     else:
-        cmd = remux_command(tools, job.part, [a.codec for a in vts.audio], metadata)
-    log.write(f"{job.path.name}: title {rec.title} chapter {rec.chapter}, {len(rec.cells)} cells, "
-              f"sectors {rec.first_sector}-{rec.last_sector}, expected {expected:.3f}s")
+        cmd = remux_command(tools, job.part, media.audio, metadata)
+    exp = f"{expected:.3f}s" if expected else "unknown"
+    log.write(f"{job.path.name}: {rec.origin}, {len(rec.cells)} cells, "
+              f"sectors {rec.first_sector}-{rec.last_sector}, expected length {exp}")
     log.write("command: " + subprocess.list2cmdline(cmd))
     if verbose_cmd:
         verbose_cmd(cmd)
@@ -239,7 +229,7 @@ def convert_one(
     try:
         assert proc.stdin is not None
         try:
-            for chunk in stitched_stream(vobs, timings):
+            for chunk in stream:
                 proc.stdin.write(chunk)
                 written += len(chunk)
                 progress(job, written / total)
@@ -271,13 +261,17 @@ def convert_one(
         problems.append("no video in the output")
     elif result.video_codec != VIDEO_CODEC[fmt]:
         problems.append(f"video is {result.video_codec}, expected {VIDEO_CODEC[fmt]}")
-    if vts.audio and result.audio_streams == 0:
+    if media.audio and result.audio_streams == 0:
         problems.append("no audio in the output")
-    tolerance = max(0.5, expected * 0.01)
-    if abs(result.duration - expected) > tolerance:
-        problems.append(f"length {result.duration:.1f}s, expected {expected:.1f}s")
+    if expected:
+        tolerance = max(0.5, expected * 0.01)
+        if abs(result.duration - expected) > tolerance:
+            problems.append(f"length {result.duration:.1f}s, expected {expected:.1f}s")
 
     os.replace(job.part, job.path)
+    if rec.date:  # file date = recording date
+        stamp = rec.date.timestamp()
+        os.utime(job.path, (stamp, stamp))
     if problems:
         job.status = "warning"
         job.note = "; ".join(problems)
@@ -290,11 +284,11 @@ def convert_one(
 def write_report(path: Path, jobs: list[Job]) -> None:
     with open(path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
-        w.writerow(["file", "recording", "title", "chapter", "length", "size_mb", "status", "note"])
+        w.writerow(["file", "recording", "recorded", "source", "length", "size_mb", "status", "note"])
         for j in jobs:
             r = j.recording
             w.writerow([
-                j.path.name, r.index, r.title, r.chapter,
+                j.path.name, r.index, f"{r.date:%Y-%m-%d %H:%M:%S}" if r.date else "", r.origin,
                 short_duration(j.duration or r.duration_seconds),
                 f"{r.size_bytes / 1048576:.1f}", j.status, j.note,
             ])

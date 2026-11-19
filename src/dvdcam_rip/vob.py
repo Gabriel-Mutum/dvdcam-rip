@@ -1,4 +1,4 @@
-"""Read title VOBs (read-only) and stitch a recording's cells into one stream.
+"""Stitch a recording's cells into one continuous MPEG program stream.
 
 Camcorders restart the MPEG timestamps at every cell, even between seamless
 cells of the same recording. A DVD player hides this by playing each cell
@@ -17,68 +17,20 @@ from __future__ import annotations
 import struct
 from collections.abc import Iterator
 from dataclasses import dataclass
-from pathlib import Path
 
 from .ifo import SECTOR, Cell
+from .media import SpanReader
 
 PTS_WRAP = 1 << 33
-CHUNK_SECTORS = 512  # 1 MB reads
 
 
 class VobError(ValueError):
     pass
 
 
-class TitleVobs:
-    """The title VOBs of one title set (VTS_xx_1.VOB … VTS_xx_9.VOB) as one
-    sector-addressed, read-only byte range."""
-
-    def __init__(self, folder: Path, vts: int):
-        by_upper = {p.name.upper(): p for p in Path(folder).iterdir()}
-        self.files: list[tuple[int, int, Path]] = []  # (first sector, sectors, path)
-        start = 0
-        for n in range(1, 10):
-            path = by_upper.get(f"VTS_{vts:02d}_{n}.VOB")
-            if path is None:
-                break
-            sectors = path.stat().st_size // SECTOR
-            self.files.append((start, sectors, path))
-            start += sectors
-        if not self.files:
-            raise VobError(f"no VTS_{vts:02d}_1.VOB in {folder}")
-        self.total_sectors = start
-
-    def read(self, first: int, count: int) -> Iterator[bytes]:
-        """Yield the bytes of sectors [first, first + count) in chunks."""
-        if first < 0 or first + count > self.total_sectors:
-            raise VobError(
-                f"sectors {first}-{first + count - 1} are past the end of the VOBs "
-                f"({self.total_sectors} sectors); the disc copy may be incomplete"
-            )
-        sector, remaining = first, count
-        for start, sectors, path in self.files:
-            if remaining == 0:
-                break
-            if sector >= start + sectors:
-                continue
-            with open(path, "rb") as f:  # read-only, always
-                f.seek((sector - start) * SECTOR)
-                n = min(remaining, start + sectors - sector)
-                while n:
-                    take = min(n, CHUNK_SECTORS)
-                    data = f.read(take * SECTOR)
-                    if len(data) != take * SECTOR:
-                        raise VobError(f"{path.name} ended early")
-                    yield data
-                    sector += take
-                    remaining -= take
-                    n -= take
-
-    def sector(self, n: int) -> bytes:
-        return b"".join(self.read(n, 1))
-
-
 # ------------------------------------------------------------- NAV packs
+
+PCI_HEADER = b"\x00\x00\x01\xbf\x03\xd4\x00"  # private stream 2, 980 bytes, PCI
 
 
 @dataclass(frozen=True)
@@ -88,12 +40,14 @@ class Nav:
     cell_id: int
     s_ptm: int  # first video presentation time of the VOBU (90 kHz)
     e_ptm: int  # end of the VOBU's video presentation (90 kHz)
+    vobu_ea: int  # last sector of the VOBU, relative to this NAV pack
 
 
 def parse_nav(sector: bytes) -> Nav | None:
     """Parse a NAV pack (PCI + DSI). Returns None if the sector isn't one."""
     if (
-        sector[:4] != b"\x00\x00\x01\xba"
+        len(sector) < SECTOR
+        or sector[:4] != b"\x00\x00\x01\xba"
         or sector[0x26:0x2A] != b"\x00\x00\x01\xbf"
         or sector[0x400:0x404] != b"\x00\x00\x01\xbf"
     ):
@@ -105,6 +59,7 @@ def parse_nav(sector: bytes) -> Nav | None:
         cell_id=sector[dsi + 27],
         s_ptm=struct.unpack_from(">I", sector, pci + 12)[0],
         e_ptm=struct.unpack_from(">I", sector, pci + 16)[0],
+        vobu_ea=struct.unpack_from(">I", sector, dsi + 8)[0],
     )
 
 
@@ -119,15 +74,15 @@ class CellTiming:
         return (self.end - self.start) % PTS_WRAP
 
 
-def cell_timing(vobs: TitleVobs, cell: Cell) -> CellTiming:
-    first = parse_nav(vobs.sector(cell.first_sector))
-    last = parse_nav(vobs.sector(cell.last_vobu_sector))
+def cell_timing(reader: SpanReader, cell: Cell) -> CellTiming:
+    first = parse_nav(reader.sector(cell.first_sector))
+    last = parse_nav(reader.sector(cell.last_vobu_sector))
     if first is None or last is None:
-        raise VobError(f"no NAV pack where the IFO says cell {cell.vob_id}/{cell.cell_id} is")
+        raise VobError(f"no NAV pack where cell {cell.vob_id}/{cell.cell_id} should start")
     if (first.vob_id, first.cell_id) != (cell.vob_id, cell.cell_id):
         raise VobError(
-            f"IFO and VOB disagree at sector {cell.first_sector}: IFO says cell "
-            f"{cell.vob_id}/{cell.cell_id}, VOB says {first.vob_id}/{first.cell_id}"
+            f"disc map and video disagree at sector {cell.first_sector}: map says cell "
+            f"{cell.vob_id}/{cell.cell_id}, video says {first.vob_id}/{first.cell_id}"
         )
     return CellTiming(cell, first.s_ptm, last.e_ptm)
 
@@ -206,14 +161,14 @@ def shift_pack(pack: bytearray, delta: int) -> None:
         o += 6 + length
 
 
-def stitched_stream(vobs: TitleVobs, timings: list[CellTiming]) -> Iterator[bytes]:
+def stitched_stream(reader: SpanReader, timings: list[CellTiming]) -> Iterator[bytes]:
     """Yield the recording as one MPEG program stream with continuous time."""
     if not timings:
         return
     position = timings[0].start  # where the next cell should start
     for t in timings:
         delta = (position - t.start) % PTS_WRAP
-        for chunk in vobs.read(t.cell.first_sector, t.cell.sectors):
+        for chunk in reader.read(t.cell.first_sector, t.cell.sectors):
             if delta == 0:
                 yield chunk
                 continue
@@ -223,3 +178,57 @@ def stitched_stream(vobs: TitleVobs, timings: list[CellTiming]) -> Iterator[byte
                 shift_pack(pack, delta)  # type: ignore[arg-type]
             yield bytes(buf)
         position = (position + t.duration) % PTS_WRAP
+
+
+def plain_stream(reader: SpanReader, cells: list[Cell]) -> Iterator[bytes]:
+    """Cells copied as they are (DVD-VR programs already have continuous time)."""
+    for c in cells:
+        yield from reader.read(c.first_sector, c.sectors)
+
+
+# ------------------------------------------------- stream details (no IFO)
+
+
+def describe_stream(reader: SpanReader, first_sector: int, sectors: int = 64) -> tuple[str, list[str]]:
+    """Read the MPEG headers near a sector: ("MPEG-2 720x480 NTSC 4:3", ["AC-3"])."""
+    data = b"".join(reader.read(first_sector, min(sectors, reader.total_sectors - first_sector)))
+    video = "unknown video"
+    i = data.find(b"\x00\x00\x01\xb3")
+    if i >= 0 and i + 8 <= len(data):
+        w = (data[i + 4] << 4) | (data[i + 5] >> 4)
+        h = ((data[i + 5] & 0x0F) << 8) | data[i + 6]
+        aspect = {2: "4:3", 3: "16:9"}.get(data[i + 7] >> 4, "")
+        std = {576: "PAL", 480: "NTSC"}.get(h, "")
+        mpeg2 = data.find(b"\x00\x00\x01\xb5", i) >= 0
+        video = " ".join(x for x in (f"MPEG-{2 if mpeg2 else 1}", f"{w}x{h}", std, aspect) if x)
+    audio: list[str] = []
+    o = 0
+    while True:
+        o = data.find(b"\x00\x00\x01", o)
+        if o < 0 or o + 9 > len(data):
+            break
+        sid = data[o + 3]
+        if sid == 0xBD and o + 9 < len(data):
+            h = o + 9 + data[o + 8]
+            if h < len(data):
+                sub = data[h]
+                codec = "AC-3" if 0x80 <= sub <= 0x87 else "DTS" if 0x88 <= sub <= 0x8F else \
+                        "LPCM" if 0xA0 <= sub <= 0xA7 else ""
+                if codec and codec not in audio:
+                    audio.append(codec)
+        elif 0xC0 <= sid <= 0xDF and "MPEG-1" not in audio:
+            audio.append("MPEG-1")
+        o += 4
+    return video, audio
+
+
+def gop_timecode(reader: SpanReader, sector: int, fps: int) -> float | None:
+    """Seconds in the first GOP header of the VOBU at `sector`, or None."""
+    count = min(16, reader.total_sectors - sector)
+    data = b"".join(reader.read(sector, count))
+    i = data.find(b"\x00\x00\x01\xb8")
+    if i < 0 or i + 8 > len(data):
+        return None
+    x = int.from_bytes(data[i + 4:i + 8], "big")
+    h, m, s, f = (x >> 26) & 31, (x >> 20) & 63, (x >> 13) & 63, (x >> 7) & 63
+    return h * 3600 + m * 60 + s + f / fps

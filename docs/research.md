@@ -83,11 +83,51 @@ FFmpeg's MP4 muxer starts the track's edit list at the first stored sample's com
 - Quality against the same deinterlaced and scaled source: SSIM 0.979, PSNR 43.4 dB on average (minimum 37.5).
 - Without `-fps_mode passthrough`, MP4's constant-frame-rate mode duplicated frames at the start.
 
+## Recording dates on the Hitachi DZ-MV750MA (DVD-Video)
+
+Searched the whole disc for anything that could hold the recording date:
+
+- NAV packs: the PCI ISRC field and everything after PCI_GI, and the DSI area after SYNCI (where vendors could put data), are all zero in every cell.
+- Streams: only video (0xE0), AC-3 (0xBD/0x80), NAV (0xBF), padding (0xBE) and system headers. No MPEG user data, and no other private streams.
+- GOP timecode: elapsed time within the recording (restarts at 00:00:00.00 at each recording), not the time of day.
+- IFO and menu VOB: the only text is the provider ID `DZ-MV750MA (HITACHI)`.
+
+**Conclusion:** this camera stores no recording date on DVD-Video discs. Other brands may; their discs would have to be checked the same way.
+
+## Unfinalized discs: scanning without a disc map
+
+`scan.py` finds recordings from the video alone:
+
+1. Find every NAV pack: the PCI header `00 00 01 BF 03 D4 00` at sector offset 0x26, checked with the DSI header at 0x400.
+2. Group consecutive VOBUs with the same VOB/cell ID that follow each other (`vobu_ea`) into cells.
+3. Start a new recording where the GOP timecode doesn't continue from the previous cell (`|tc − (prev_tc + prev_duration)| > 1.5 s`), or where the sectors aren't contiguous. This works for elapsed-time timecodes (Hitachi) and time-of-day ones. Without any timecode, every cell becomes a recording.
+4. Skip VOBUs with button highlights (PCI HLI status ≠ 0): those are menus, which camcorder recordings never have.
+
+**Verified:** on the Hitachi disc with its IFOs removed, scanning finds exactly the disc map's 12 recordings with identical sector ranges (in 2.4 s), and the converted files are identical. Scanning a whole ISO image (menu VOB included) gives the same 12.
+
+## DVD-VR
+
+`dvdvr.py` follows the VR_MANGR.IFO layout as implemented by Pádraig Brady's GPL tool [dvd-vr](https://github.com/pixelb/dvd-vr) (an independent implementation from its description):
+
+- Header `DVD_RTR_VMG0`; program table offset at 256; text encoding at 67; disc info text at 98.
+- Program table: VOB formats (60 bytes each), then the program count and one offset per program.
+- Each program: a 5-byte recording timestamp (year 14 bits, month 4, day 5, hour 5, minute 6, second 6), the format ID, start/end PTM, then a VOBU map giving its first sector in VR_MOVIE.VRO and the size of each VOBU (low 10 bits).
+- A program is one continuous program stream, so it's copied as-is. Lengths come from the PTMs, checked against a plausible bitrate; otherwise the length is unknown until the file is converted.
+
+**Tested on a constructed disc:** three Hitachi recordings were written as a VR_MOVIE.VRO with a matching VR_MANGR.IFO. Dates, names, file times and `creation_time` came out right, and the video was identical to the DVD-Video conversion. This proves the pipeline and that parser and builder agree. A real DVD-RAM/-RW disc is still needed to confirm the layout against an actual recorder.
+
+## ISO images
+
+`media.py` reads UDF (anchor at sector 256, partition and logical volume descriptors, file set descriptor, file entries and extended file entries, short/long allocation descriptors, embedded data) and ISO 9660 (primary volume descriptor, directory records, multi-extent files) without mounting. UDF is tried first, since DVD-RAM discs often have no ISO 9660 bridge.
+
+**Verified** with UDF-only and ISO 9660-only images of the Hitachi disc built by Windows IMAPI2: same recordings, and converting from the ISO gives files identical to converting from the folder.
+
 ## Open questions (need real discs)
 
-1. **Recording date and time.** DVD-Video has no standard field for it. Brands hide it in vendor-specific places (private streams, MPEG user data, or DV-style packs in the NAV/RDI data). Goal: name files `2007-08-14_15-32-10.mp4` and write `creation_time` metadata. Needs sample discs from each brand.
-2. **One title per clip vs. chapters per clip**: which pattern each brand uses.
-3. Whether any models split one recording across cells (e.g. at a VOB boundary or a seamless-branching point), so that a "recording" is really a program rather than a cell.
+1. **Recording dates from other brands' DVD-Video discs** (Sony, Panasonic, Canon), if they store them at all.
+2. **A real DVD-VR disc**, to confirm the VR_MANGR.IFO layout and the "2 unexplained bytes" before the VOBU map.
+3. **Reading an unfinalized disc straight from the drive** (`\\.\D:`); the ISO route works.
+4. **One title per clip vs. chapters per clip**: which pattern each brand uses.
 
 ## Plan (original)
 

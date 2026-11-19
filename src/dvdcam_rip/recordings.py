@@ -1,25 +1,27 @@
-"""Turn a parsed disc into a list of recordings (one output file each).
+"""Recordings: what becomes one output file each.
 
-How a camcorder maps record/stop presses onto the DVD structure varies by
-brand, so there are three ways to split:
+DVD-Video discs: how a camcorder maps record/stop presses onto the DVD
+structure varies by brand, so there are three ways to split:
 
 - "chapter" (default): one recording per chapter (program) of each title.
   Most camcorders write each clip as a chapter of one title, or as its own
   one-chapter title; both come out right this way.
-- "vob": one recording per run of cells sharing a VOB ID. Useful if a model
-  puts several clips in one chapter but gives each its own VOB ID.
+- "vob": one recording per run of cells sharing a VOB ID.
 - "cell": one recording per cell, the finest split possible.
 
-Which one is right for each brand is an open question until we have sample
-discs; `--list --split cell` shows the raw structure to decide.
+DVD-VR discs list their recordings ("programs") directly, and unfinalized
+discs are split by scanning (see scan.py), so --split only applies to
+finalized DVD-Video discs.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Literal
 
 from .ifo import SECTOR, Cell, Disc, Vts
+from .media import SpanReader
 
 SplitMode = Literal["chapter", "vob", "cell"]
 SPLIT_MODES: tuple[SplitMode, ...] = ("chapter", "vob", "cell")
@@ -28,14 +30,23 @@ SPLIT_MODES: tuple[SplitMode, ...] = ("chapter", "vob", "cell")
 @dataclass
 class Recording:
     index: int  # 1-based, disc order
-    title: int  # disc-wide title number
-    chapter: int  # chapter within the title (first chapter covered)
-    vts: int
-    pgc: int
     cells: list[Cell]
+    reader: SpanReader | None = None  # where the cells' sectors are read from
+    stitch: bool = True  # cells have NAV packs and restart their timestamps
+    date: datetime | None = None  # when it was recorded, if the disc says
+    origin: str = ""  # where on the disc it came from, for the list
+    seconds: float | None = None  # overrides the cells' durations
+    title: int = 0
+    chapter: int = 0
+    vts: int = 0
+    pgc: int = 0
+    notes: list[str] = field(default_factory=list)
 
     @property
     def duration_seconds(self) -> float:
+        """Length in seconds; 0 when unknown."""
+        if self.seconds is not None:
+            return self.seconds
         return sum(c.duration.total_seconds for c in self.cells)
 
     @property
@@ -55,9 +66,11 @@ class Recording:
         return self.cells[-1].last_sector
 
 
-def list_recordings(disc: Disc, split: SplitMode = "chapter") -> list[Recording]:
+def list_recordings(disc: Disc, split: SplitMode = "chapter",
+                    readers: dict[int, SpanReader] | None = None) -> list[Recording]:
     if split not in SPLIT_MODES:
         raise ValueError(f"split must be one of {SPLIT_MODES}")
+    readers = readers or {}
     out: list[Recording] = []
     for title in disc.vmg.titles:
         vts = disc.title_sets[title.vts]
@@ -66,11 +79,13 @@ def list_recordings(disc: Disc, split: SplitMode = "chapter") -> list[Recording]
                 out.append(
                     Recording(
                         index=len(out) + 1,
+                        cells=group,
+                        reader=readers.get(title.vts),
+                        origin=f"ch {title.number}.{chapter}",
                         title=title.number,
                         chapter=chapter,
                         vts=title.vts,
                         pgc=pgc_no,
-                        cells=group,
                     )
                 )
     return out

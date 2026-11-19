@@ -29,8 +29,9 @@ from .convert import (
     write_report,
 )
 from .ffmpeg import FfmpegMissing, find_tools, has_encoder
-from .ifo import Disc, IfoError, read_disc
-from .recordings import SPLIT_MODES, Recording, list_recordings
+from .media import MediaError
+from .recordings import SPLIT_MODES
+from .source import Media, SourceError, open_source
 from .vob import VobError
 
 EXIT_OK, EXIT_FAILED, EXIT_INPUT, EXIT_NO_FFMPEG, EXIT_INTERRUPTED = 0, 1, 2, 3, 130
@@ -43,22 +44,33 @@ def build_parser() -> argparse.ArgumentParser:
             "Copy the recordings on a DVD camcorder disc into separate MP4 files, "
             "without re-encoding (same quality as the disc). The disc files are only read."
         ),
-        epilog="Example: dvdcam-rip \"D:\\\"   or   dvdcam-rip \"C:\\Users\\me\\Downloads\\Video Camera\"",
+        epilog=(
+            "examples:\n"
+            '  dvdcam-rip "D:\\"                                    the disc in drive D:\n'
+            '  dvdcam-rip "C:\\Users\\me\\Downloads\\Video Camera"     a copied disc folder\n'
+            '  dvdcam-rip "C:\\Users\\me\\Downloads\\disc.iso"         an ISO image\n'
+            '  dvdcam-rip "D:\\" --format h264 --yes               iPhone-friendly copies, no questions'
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    p.add_argument("source", help="the disc (e.g. D:\\) or a folder with the copied disc files (VIDEO_TS)")
+    p.add_argument("source", help="the disc (e.g. D:\\), a folder with the copied disc files, or an ISO image")
     p.add_argument("-o", "--output", help="output folder (default: Downloads\\dvdcam-rip\\<disc name>)")
     p.add_argument("--list", action="store_true", help="only list the recordings, convert nothing")
-    p.add_argument("--json", action="store_true", help="with --list: print the disc structure as JSON")
+    p.add_argument("--json", action="store_true", help="print what's on the disc as JSON, convert nothing")
     p.add_argument("--dry-run", action="store_true", help="show what would be created, then stop")
     p.add_argument("--only", metavar="N", help="convert only these recordings, e.g. 3 or 1,4-6")
-    p.add_argument("-y", "--yes", action="store_true", help="don't ask for confirmation")
+    p.add_argument("-y", "--yes", action="store_true",
+                   help="don't ask any questions (uses the original format unless --format is given)")
     p.add_argument("--format", choices=FORMATS,
                    help="original = exact MPEG-2 copy; h264 = re-encoded to play everywhere "
                         "(default: ask, or original with --yes)")
     p.add_argument("--overwrite", action="store_true", help="replace files that already exist (default: skip them)")
     p.add_argument("--open", action="store_true", help="open the output folder when finished")
     p.add_argument("--split", choices=SPLIT_MODES, default="chapter",
-                   help="what counts as one recording (default: chapter)")
+                   help="finalized DVD-Video discs: what counts as one recording (default: chapter)")
+    p.add_argument("--scan", action="store_true",
+                   help="ignore the disc map and find recordings by scanning the video "
+                        "(automatic for unfinalized discs)")
     p.add_argument("--ffmpeg", metavar="PATH", help="path to ffmpeg if it isn't found automatically")
     p.add_argument("-q", "--quiet", action="store_true", help="print less")
     p.add_argument("-v", "--verbose", action="store_true", help="print more, including FFmpeg commands")
@@ -114,52 +126,51 @@ def fmt_size(n: float) -> str:
     return ""
 
 
-def describe_disc(ui: Ui, disc: Disc) -> None:
-    ui.say(f"Disc:    {disc.root}")
-    if disc.vmg.provider:
-        ui.say(f"Camera:  {disc.vmg.provider}")
-    for n, vts in disc.title_sets.items():
-        v = vts.video
-        label = "Video:  " if len(disc.title_sets) == 1 else f"VTS {n:02d}:"
-        ui.say(f"{label} {v.codec} {v.width}x{v.height} {v.standard} {v.aspect}")
-        audio = ", ".join(f"{a.codec} {a.channels}ch {a.sample_rate // 1000} kHz" for a in vts.audio)
-        ui.say(f"Audio:   {audio or 'none'}")
+def describe_media(ui: Ui, media: Media) -> None:
+    ui.say(f"Source:  {media.location}")
+    ui.say(f"Type:    {media.kind}")
+    if media.camera:
+        ui.say(f"Camera:  {media.camera}")
+    ui.say(f"Video:   {media.video}")
+    ui.say(f"Audio:   {media.audio_detail or ', '.join(media.audio) or 'none'}")
+    for note in media.notes:
+        ui.say(f"Note:    {note}")
 
 
-def print_table(ui: Ui, jobs: list[Job]) -> None:
-    ui.always(f"  {'#':>3}  {'Length':>8}  {'Size':>9}  {'Chapter':>7}  File")
+def print_table(ui: Ui, jobs: list[Job], dated: bool) -> None:
+    head = f"  {'#':>3}  {'Length':>8}  {'Size':>9}  "
+    if dated:
+        head += f"{'Recorded':<16}  "
+    ui.always(head + f"{'Source':<9}  File")
     for j in jobs:
         r = j.recording
-        ui.always(
-            f"  {r.index:>3}  {short_duration(r.duration_seconds):>8}  {fmt_size(r.size_bytes):>9}"
-            f"  {f'{r.title}.{r.chapter}':>7}  {j.path.name}"
-        )
+        length = short_duration(r.duration_seconds) if r.duration_seconds else "?"
+        line = f"  {r.index:>3}  {length:>8}  {fmt_size(r.size_bytes):>9}  "
+        if dated:
+            line += f"{(f'{r.date:%Y-%m-%d %H:%M}' if r.date else '-'):<16}  "
+        ui.always(line + f"{r.origin:<9}  {j.path.name}")
         if ui.verbose:
             vobs = ",".join(str(v) for v in r.vob_ids)
             ui.always(f"{'':>8}cells {len(r.cells)}, VOB ids {vobs}, sectors {r.first_sector}-{r.last_sector}")
 
 
-def disc_json(disc: Disc, recordings: list[Recording]) -> dict:
-    return {
-        "root": str(disc.root),
-        "provider": disc.vmg.provider,
-        "title_sets": {
-            n: {"video": asdict(v.video), "audio": [asdict(a) for a in v.audio]}
-            for n, v in disc.title_sets.items()
-        },
-        "titles": [asdict(t) for t in disc.vmg.titles],
+def media_json(media: Media) -> dict:
+    out: dict = {
+        "source": str(media.location),
+        "type": media.kind,
+        "camera": media.camera,
+        "video": media.video,
+        "audio": media.audio,
+        "notes": media.notes,
         "recordings": [
             {
                 "index": r.index,
-                "title": r.title,
-                "chapter": r.chapter,
-                "vts": r.vts,
-                "pgc": r.pgc,
-                "duration_seconds": round(r.duration_seconds, 3),
+                "source": r.origin,
+                "recorded": r.date.isoformat() if r.date else None,
+                "duration_seconds": round(r.duration_seconds, 3) or None,
                 "size_bytes": r.size_bytes,
                 "first_sector": r.first_sector,
                 "last_sector": r.last_sector,
-                "vob_ids": r.vob_ids,
                 "cells": [
                     {
                         "vob_id": c.vob_id,
@@ -167,15 +178,23 @@ def disc_json(disc: Disc, recordings: list[Recording]) -> dict:
                         "duration": str(c.duration),
                         "first_sector": c.first_sector,
                         "last_sector": c.last_sector,
-                        "seamless": c.seamless,
-                        "stc_discontinuity": c.stc_discontinuity,
                     }
                     for c in r.cells
                 ],
             }
-            for r in recordings
+            for r in media.recordings
         ],
     }
+    if media.disc:
+        d = media.disc
+        out["dvd_video"] = {
+            "title_sets": {
+                n: {"video": asdict(v.video), "audio": [asdict(a) for a in v.audio]}
+                for n, v in d.title_sets.items()
+            },
+            "titles": [asdict(t) for t in d.vmg.titles],
+        }
+    return out
 
 
 def ask(question: str) -> bool:
@@ -210,6 +229,7 @@ def print_declined(ui: Ui, source: str) -> None:
     ui.always("\nOK, nothing was converted and no files were written.")
     ui.always("If the list isn't what you expected:")
     ui.always(f'  - see every piece of the disc:  dvdcam-rip "{source}" --list --split cell')
+    ui.always(f'  - find them from the video:     dvdcam-rip "{source}" --scan')
     ui.always(f'  - convert only some of them:    dvdcam-rip "{source}" --only 3,5-7')
     ui.always("  - report a problem:             https://github.com/Gabriel-Mutum/dvdcam-rip/issues")
 
@@ -222,18 +242,23 @@ def main(argv: list[str] | None = None) -> int:
     ui = Ui(args.quiet, args.verbose)
 
     # 1. Read the disc
+    def scan_progress(fraction: float) -> None:
+        ui.progress("Scanning the video for recordings...", fraction)
+
     try:
-        disc = read_disc(Path(args.source))
-    except (IfoError, OSError) as e:
+        media = open_source(args.source, args.split, args.scan, progress=scan_progress)
+    except (SourceError, MediaError, VobError, OSError) as e:
         ui.error(str(e))
         return EXIT_INPUT
-    all_recordings = list_recordings(disc, args.split)
+    if ui.tty and not ui.quiet and "scanned" in media.kind:
+        print("\r" + " " * 60 + "\r", end="")
+    all_recordings = media.recordings
     if not all_recordings:
         ui.error("no recordings found on this disc")
         return EXIT_INPUT
 
     if args.json:
-        print(json.dumps(disc_json(disc, all_recordings), indent=2))
+        print(json.dumps(media_json(media), indent=2))
         return EXIT_OK
 
     recordings = all_recordings
@@ -247,14 +272,14 @@ def main(argv: list[str] | None = None) -> int:
 
     # 2. Show what was found
     ui.say(f"dvdcam-rip {__version__}\n")
-    describe_disc(ui, disc)
+    describe_media(ui, media)
     total_len = sum(r.duration_seconds for r in recordings)
     total_size = sum(r.size_bytes for r in recordings)
     picked = f" (of {len(all_recordings)})" if args.only else ""
     if not ui.quiet or args.list or not args.yes:  # the table is what the user confirms
         ui.always(f"\nFound {len(recordings)} recordings{picked}, {short_duration(total_len)} in total, "
                   f"{fmt_size(total_size)}:\n")
-        print_table(ui, plan_jobs(recordings, len(all_recordings), Path(".")))
+        print_table(ui, plan_jobs(recordings, len(all_recordings), Path(".")), media.has_dates)
 
     if args.list:
         return EXIT_OK
@@ -293,9 +318,9 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_NO_FFMPEG
 
     # 4. Work out the output and check it
-    output = Path(args.output).expanduser() if args.output else default_output(disc, fmt)
+    output = Path(args.output).expanduser() if args.output else default_output(media, fmt)
     try:
-        check_output_location(output, disc)
+        check_output_location(output, media)
     except ValueError as e:
         ui.error(str(e))
         return EXIT_INPUT
@@ -347,8 +372,8 @@ def main(argv: list[str] | None = None) -> int:
         ui.error(f"can't create the output folder {output}: {e}")
         return EXIT_INPUT
     log = Log(output / "dvdcam-rip.log")
-    log.write(f"dvdcam-rip {__version__}, FFmpeg {tools.version}, source {disc.root}, "
-              f"camera '{disc.vmg.provider}', {len(todo)} to convert")
+    log.write(f"dvdcam-rip {__version__}, FFmpeg {tools.version}, source {media.location}, "
+              f"{media.kind}, camera '{media.camera}', {len(todo)} to convert")
 
     ui.say("")
     started = time.monotonic()
@@ -364,19 +389,21 @@ def main(argv: list[str] | None = None) -> int:
             how = "encoded to H.264" if fmt == "h264" else "copied"
             metadata = {
                 "title": job.path.stem,
-                "comment": f"{disc.vmg.provider or 'DVD camcorder'}; title {job.recording.title} "
-                           f"chapter {job.recording.chapter}; {how} by dvdcam-rip {__version__}",
+                "comment": f"{media.camera or 'DVD camcorder'}; {job.recording.origin}; "
+                           f"{how} by dvdcam-rip {__version__}",
             }
+            if job.recording.date:
+                metadata["creation_time"] = job.recording.date.isoformat()
             ui.progress(prefix, 0.0, force=True)
             try:
                 convert_one(
-                    job, disc, tools, log,
+                    job, media, tools, log,
                     progress=lambda _j, f, p=prefix: ui.progress(p, f),
                     metadata=metadata,
                     verbose_cmd=(lambda c: ui.detail("\n" + subprocess.list2cmdline(c))) if args.verbose else None,
                     fmt=fmt,
                 )
-            except (VobError, OSError, RuntimeError) as e:
+            except (VobError, MediaError, OSError, RuntimeError) as e:
                 job.status = "failed"
                 job.note = str(e)
                 log.write(f"{job.path.name}: FAILED, {e}")

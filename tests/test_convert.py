@@ -15,15 +15,16 @@ from test_ifo import chapters_disc  # noqa: E402
 from dvdcam_rip import cli  # noqa: E402
 from dvdcam_rip.convert import (  # noqa: E402
     check_output_location,
-    disc_name,
     file_name,
     parse_only,
     plan_jobs,
     short_duration,
     space_needed,
 )
-from dvdcam_rip.ifo import read_disc  # noqa: E402
-from dvdcam_rip.recordings import list_recordings  # noqa: E402
+from dvdcam_rip.source import open_source  # noqa: E402
+from dvdcam_rip.recordings import Recording  # noqa: E402
+from dvdcam_rip.ifo import Cell, Duration  # noqa: E402
+from datetime import datetime  # noqa: E402
 from dvdcam_rip.vob import PTS_WRAP, read_pts, read_scr, shift_pack, write_pts, write_scr  # noqa: E402
 
 
@@ -97,13 +98,15 @@ class PlanningTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "Video Camera"
             write_disc(root, [chapters_disc()], [(1, 1)])
-            disc = read_disc(root)
-            self.assertEqual(disc_name(disc), "Video Camera")  # folder holding VIDEO_TS
-            recs = list_recordings(disc)
+            media = open_source(root)
+            self.assertEqual(media.name, "Video Camera")  # folder holding VIDEO_TS
+            recs = media.recordings
             self.assertEqual(file_name(recs[1], len(recs)), "Recording 02 (40s).mp4")
             with self.assertRaises(ValueError):
-                check_output_location(disc.root / "out", disc)
-            check_output_location(Path(tmp) / "elsewhere", disc)
+                check_output_location(root / "out", media)
+            with self.assertRaises(ValueError):
+                check_output_location(root / "VIDEO_TS" / "out", media)
+            check_output_location(Path(tmp) / "elsewhere", media)
 
             out = Path(tmp) / "out"
             jobs = plan_jobs(recs, len(recs), out)
@@ -112,6 +115,23 @@ class PlanningTests(unittest.TestCase):
             jobs[0].path.write_bytes(b"done")
             self.assertEqual(space_needed(jobs, overwrite=False), full - recs[0].size_bytes)
             self.assertEqual(space_needed(jobs, overwrite=True), full)
+
+
+class DatedNameTests(unittest.TestCase):
+    def rec(self, index, date, seconds):
+        cell = Cell(1, 1, 1, Duration.from_seconds(seconds), 0, 9, 0, False, False)
+        return Recording(index, [cell], date=date, seconds=seconds or None)
+
+    def test_dated_names_and_collisions(self):
+        d = datetime(2008, 7, 4, 10, 15, 30)
+        recs = [self.rec(1, d, 9), self.rec(2, d, 9), self.rec(3, None, 0), self.rec(4, d, 0)]
+        names = [j.path.name for j in plan_jobs(recs, 4, Path("out"))]
+        self.assertEqual(names, [
+            "2008-07-04 10-15-30 (9s).mp4",
+            "2008-07-04 10-15-30 (9s) #2.mp4",  # same second and length
+            "Recording 03.mp4",  # length unknown: left out
+            "2008-07-04 10-15-30.mp4",
+        ])
 
 
 class CliFlowTests(unittest.TestCase):

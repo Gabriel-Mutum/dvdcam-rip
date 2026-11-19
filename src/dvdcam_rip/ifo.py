@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import struct
 from dataclasses import dataclass, field
-from pathlib import Path
 
 SECTOR = 2048
 
@@ -63,6 +62,16 @@ class Duration:
         h, m, s, f = b[o], b[o + 1], b[o + 2], b[o + 3]
         rate = {1: 25.0, 3: 29.97}.get(f >> 6, 0.0)
         return cls(_bcd(h), _bcd(m), _bcd(s), _bcd(f & 0x3F), rate)
+
+    @classmethod
+    def from_seconds(cls, seconds: float, fps: float = 29.97) -> "Duration":
+        """For durations measured elsewhere (NAV packs, DVD-VR). Exact to the
+        frame when fps matches the video."""
+        whole = int(seconds)
+        h, rem = divmod(whole, 3600)
+        m, s = divmod(rem, 60)
+        frames = (seconds - whole) * fps
+        return cls(h, m, s, int(round(frames)), fps) if fps else cls(h, m, s, 0, 0.0)
 
     @property
     def total_seconds(self) -> float:
@@ -319,53 +328,30 @@ def parse_vts(data: bytes, number: int = 0) -> Vts:
 
 @dataclass
 class Disc:
-    root: Path  # the VIDEO_TS folder
     vmg: Vmg
     title_sets: dict[int, Vts]
 
 
-def find_video_ts(source: Path) -> Path:
-    """Accept a disc root or a VIDEO_TS folder; return the VIDEO_TS folder."""
-    source = Path(source)
-    if source.is_file():
-        if source.suffix.lower() == ".iso":
-            raise IfoError("ISO images are not supported yet; mount the image and pass its drive")
-        source = source.parent
-    for candidate in (source, source / "VIDEO_TS", source / "video_ts"):
-        if _ifo_path(candidate, "VIDEO_TS.IFO"):
-            return candidate
-    if (source / "DVD_RTAV").is_dir():
-        raise IfoError("this is a DVD-VR disc (DVD_RTAV/VR_MOVIE.VRO), not supported yet")
-    raise IfoError(f"no VIDEO_TS/VIDEO_TS.IFO under {source}")
-
-
-def _ifo_path(folder: Path, name: str) -> Path | None:
-    """Find an IFO, falling back to its .BUP backup copy."""
-    if not folder.is_dir():
-        return None
-    by_upper = {p.name.upper(): p for p in folder.iterdir()}
-    return by_upper.get(name) or by_upper.get(name[:-4] + ".BUP")
-
-
-def read_disc(source: Path) -> Disc:
-    root = find_video_ts(source)
-    vmg = parse_vmg(_read_ifo(root, "VIDEO_TS.IFO"))
+def read_video_ts(files: dict) -> Disc:
+    """Parse the IFOs of a VIDEO_TS directory (a dict of upper-case name ->
+    FileRef). A missing or damaged IFO is replaced by its .BUP backup."""
+    vmg = _parse_with_backup(files, "VIDEO_TS.IFO", parse_vmg)
     sets = {}
     for n in sorted({t.vts for t in vmg.titles}):
-        sets[n] = parse_vts(_read_ifo(root, f"VTS_{n:02d}_0.IFO"), n)
-    return Disc(root, vmg, sets)
+        sets[n] = _parse_with_backup(files, f"VTS_{n:02d}_0.IFO", lambda d, n=n: parse_vts(d, n))
+    if not vmg.titles:
+        raise IfoError("the disc map lists no titles")
+    return Disc(vmg, sets)
 
 
-def _read_ifo(folder: Path, name: str) -> bytes:
-    """Read an IFO; if it is damaged or missing, try its .BUP backup."""
-    by_upper = {p.name.upper(): p for p in folder.iterdir()}
+def _parse_with_backup(files: dict, name: str, parse):
     errors = []
     for candidate in (name, name[:-4] + ".BUP"):
-        path = by_upper.get(candidate)
-        if path is None:
+        ref = files.get(candidate)
+        if ref is None:
             continue
-        data = path.read_bytes()
-        if data[:9] == b"DVDVIDEO-":
-            return data
-        errors.append(f"{path.name} has no DVDVIDEO header")
-    raise IfoError(f"cannot read {name} in {folder}: " + ("; ".join(errors) or "not found"))
+        try:
+            return parse(ref.read())
+        except (IfoError, struct.error, IndexError, ZeroDivisionError) as e:
+            errors.append(f"{candidate}: {e or type(e).__name__}")
+    raise IfoError(f"can't read {name}: " + ("; ".join(errors) or "not found"))
