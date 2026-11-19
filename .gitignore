@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Disc material and output: home videos never go in the repo
+samples/
+discs/
+output/
+*.iso
+*.VOB
+*.vob
+*.IFO
+*.ifo
+*.BUP
+*.bup
+*.VRO
+*.vro
+*.mp4
+*.mkv
+*.mov
+
+# Except tiny synthetic fixtures made for tests
+!tests/fixtures/**
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
