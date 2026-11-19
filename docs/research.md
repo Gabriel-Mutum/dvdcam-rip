@@ -44,6 +44,19 @@ The default will be a lossless MP4 remux, with MKV as an option (needed for LPCM
 - **Our own IFO parser** (Python `struct`): needed anyway to list recordings, lengths and sector ranges, to make nice output names, and for the DVD-VR and unfinalized fallbacks. The parts we need are small and documented (dvd.sourceforge.net "DVD-Video information", libdvdread's `ifo_types.h`).
 - Prior art that confirms the approach: PgcDemux, DVD Decrypter IFO mode, `dvd-vr`.
 
+## Observed on real discs
+
+### Hitachi DZ-MV750MA (finalized DVD-Video, NTSC)
+
+- `VIDEO_TS.IFO` carries the provider ID `DZ-MV750MA (HITACHI)`. That's useful for brand detection.
+- One title set, one title, one PGC. **Each recording is one chapter** (program), so `--split chapter` is right.
+- Within a recording the camera chops the stream into cells, each with its own VOB ID, in a fixed rhythm of roughly 16 s, 8 s, 21 s, 9 s, 21 s, 9 s… The last cell is whatever is left over.
+- The first cell of each recording is non-seamless and the rest are seamless. That's a second, independent signal for where recordings start.
+- **Every cell has the STC-discontinuity flag**, including the seamless cells inside a recording. Timestamps restart at every cell, so the remux must rebuild them across cells, not just inside each recording.
+- Video is MPEG-2 **704×480** 4:3 (not 720), with AC-3 2.0 audio at 48 kHz.
+- Cell sector ranges in the IFO matched the NAV packs (`nv_pck_lbn`, VOB ID, cell ID) for all 99 cells. Following the `vobu_ea` links through the VOB ends exactly at the last cell's last sector.
+- No MPEG user data (`00 00 01 B2`) in the first VOBUs, so the recording date (if stored at all) isn't in the obvious place.
+
 ## Open questions (need real discs)
 
 1. **Recording date and time.** DVD-Video has no standard field for it. Brands hide it in vendor-specific places (private streams, MPEG user data, or DV-style packs in the NAV/RDI data). Goal: name files `2007-08-14_15-32-10.mp4` and write `creation_time` metadata. Needs sample discs from each brand.
