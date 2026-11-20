@@ -1,0 +1,108 @@
+<!doctype html>
+<!-- Source of docs/social-preview.png (1280x640), GitHub's social preview image.
+     Re-render: chrome --headless=new --screenshot=social-preview.png --window-size=1280,640
+                --hide-scrollbars --user-data-dir=<temp folder> file:///.../social-preview.html -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; width: 1280px; height: 640px; overflow: hidden; }
+  body {
+    font-family: "Segoe UI", system-ui, sans-serif;
+    color: #f1f5f9;
+    background:
+      radial-gradient(900px 500px at 15% 20%, rgba(56, 189, 248, 0.18), transparent 60%),
+      radial-gradient(800px 500px at 90% 90%, rgba(168, 85, 247, 0.18), transparent 60%),
+      linear-gradient(135deg, #0b1220 0%, #111827 55%, #0f172a 100%);
+    position: relative;
+  }
+  .art { position: absolute; left: 60px; top: 70px; }
+  .text { position: absolute; left: 640px; top: 120px; width: 590px; }
+  h1 { margin: 0; font-size: 84px; font-weight: 700; letter-spacing: -1.5px; line-height: 1; }
+  h1 span { color: #38bdf8; }
+  .tag { margin-top: 22px; font-size: 38px; font-weight: 600; line-height: 1.2; color: #e2e8f0; }
+  .pills { margin-top: 34px; display: flex; flex-wrap: wrap; gap: 12px; }
+  .pill {
+    font-size: 21px; font-weight: 600; padding: 9px 18px; border-radius: 999px;
+    background: rgba(148, 163, 184, 0.14); border: 1px solid rgba(148, 163, 184, 0.35); color: #cbd5e1;
+  }
+  .foot {
+    position: absolute; left: 60px; right: 60px; bottom: 40px;
+    display: flex; justify-content: space-between; font-size: 22px; color: #94a3b8;
+  }
+  .foot b { color: #e2e8f0; font-weight: 600; }
+</style>
+</head>
+<body>
+  <svg class="art" width="540" height="470" viewBox="0 0 540 470" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <radialGradient id="sheen" cx="35%" cy="30%" r="80%">
+        <stop offset="0%" stop-color="#e0f2fe"/>
+        <stop offset="30%" stop-color="#a5b4fc"/>
+        <stop offset="55%" stop-color="#f0abfc"/>
+        <stop offset="75%" stop-color="#67e8f9"/>
+        <stop offset="100%" stop-color="#94a3b8"/>
+      </radialGradient>
+      <linearGradient id="arrow" gradientUnits="userSpaceOnUse" x1="305" y1="0" x2="378" y2="0">
+        <stop offset="0%" stop-color="#38bdf8"/><stop offset="100%" stop-color="#a855f7"/>
+      </linearGradient>
+      <linearGradient id="tile" x1="0" x2="0" y1="0" y2="1">
+        <stop offset="0%" stop-color="#1e293b"/><stop offset="100%" stop-color="#0f172a"/>
+      </linearGradient>
+    </defs>
+
+    <!-- the disc -->
+    <g transform="translate(150 235)">
+      <circle r="140" fill="url(#sheen)" opacity="0.95"/>
+      <circle r="140" fill="none" stroke="#e2e8f0" stroke-opacity="0.5" stroke-width="2"/>
+      <circle r="112" fill="none" stroke="#ffffff" stroke-opacity="0.18" stroke-width="10"/>
+      <circle r="78" fill="none" stroke="#ffffff" stroke-opacity="0.12" stroke-width="16"/>
+      <circle r="44" fill="#cbd5e1"/>
+      <circle r="44" fill="none" stroke="#64748b" stroke-width="3"/>
+      <circle r="17" fill="#111827"/>
+      <path d="M -100 -60 A 120 120 0 0 1 -30 -112" stroke="#ffffff" stroke-opacity="0.7"
+            stroke-width="8" stroke-linecap="round" fill="none"/>
+    </g>
+
+    <!-- the arrow -->
+    <path d="M 305 235 L 362 235" stroke="url(#arrow)" stroke-width="12" stroke-linecap="round"/>
+    <path d="M 352 214 L 378 235 L 352 256" stroke="#a855f7" stroke-width="12"
+          stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+
+    <!-- three clips, one per recording -->
+    <g font-family="Segoe UI, sans-serif" font-weight="600">
+      <g transform="translate(400 72)">
+        <rect width="135" height="96" rx="12" fill="url(#tile)" stroke="#38bdf8" stroke-width="2.5"/>
+        <path d="M 58 18 L 58 46 L 82 32 Z" fill="#38bdf8"/>
+        <text x="67" y="80" text-anchor="middle" font-size="17" fill="#cbd5e1">Clip 1.mp4</text>
+      </g>
+      <g transform="translate(400 187)">
+        <rect width="135" height="96" rx="12" fill="url(#tile)" stroke="#818cf8" stroke-width="2.5"/>
+        <path d="M 58 18 L 58 46 L 82 32 Z" fill="#818cf8"/>
+        <text x="67" y="80" text-anchor="middle" font-size="17" fill="#cbd5e1">Clip 2.mp4</text>
+      </g>
+      <g transform="translate(400 302)">
+        <rect width="135" height="96" rx="12" fill="url(#tile)" stroke="#a855f7" stroke-width="2.5"/>
+        <path d="M 58 18 L 58 46 L 82 32 Z" fill="#a855f7"/>
+        <text x="67" y="80" text-anchor="middle" font-size="17" fill="#cbd5e1">Clip 3.mp4</text>
+      </g>
+    </g>
+  </svg>
+
+  <div class="text">
+    <h1>dvdcam<span>-rip</span></h1>
+    <div class="tag">Convert camcorder DVDs and ISO files to MP4</div>
+    <div class="pills">
+      <div class="pill">One file per recording</div>
+      <div class="pill">Lossless</div>
+      <div class="pill">VOB · IFO · ISO · DVD-VR</div>
+      <div class="pill">iPhone-ready H.264</div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <span><b>github.com/Gabriel-Mutum/dvdcam-rip</b></span>
+    <span>Free &amp; open source · MIT</span>
+  </div>
+</body>
+</html>
