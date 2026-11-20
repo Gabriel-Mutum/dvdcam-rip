@@ -308,7 +308,15 @@ Press Enter to close this window.
 
 What each part does:
 
-- **dvdcam-rip**: deletes the downloaded dvdcam-rip folder, or runs `pip uninstall dvdcam-rip` if it was installed with pip. A folder that's a git working copy (one you cloned and may have changed) is never deleted automatically; you're told to delete it yourself.
+- **dvdcam-rip**: deletes the dvdcam-rip folder (from the ZIP or `git clone`), or runs `pip uninstall dvdcam-rip` if it was installed with pip. A git clone is deleted only if it holds nothing of your own. If you've changed or added files, made commits that aren't on GitHub, or stashed changes, the folder is kept, and you're told why so nothing you made is lost:
+
+  ```
+  This will be kept:
+    - the dvdcam-rip folder C:\Users\you\Documents\dvdcam-rip, because it's a git clone with 2 changed or added files
+
+  There's nothing dvdcam-rip can remove automatically. You can delete what's listed
+  above yourself (see "Removing dvdcam-rip" in the README).
+  ```
 - **FFmpeg**: removed only if it was installed with winget (`winget install Gyan.FFmpeg`, as this README suggests). An FFmpeg installed any other way is left alone, and its location is shown. Choose this only if no other program uses FFmpeg.
 - **Python**: never uninstalled automatically, because other programs may need it and it's what runs dvdcam-rip. Windows' *Installed apps* page opens instead, with instructions: search for "Python", click **⋯** next to it, then **Uninstall**.
 

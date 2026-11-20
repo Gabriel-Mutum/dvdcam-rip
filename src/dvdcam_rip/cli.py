@@ -330,37 +330,52 @@ def removal_menu(ui: Ui, output: Path | None) -> bool:
     except FfmpegMissing:
         ffmpeg = None
 
-    print("\nThis will remove:")
+    package = winget_package(ffmpeg) if level >= 2 else None
+    will: list[str] = []
+    kept: list[str] = []
     if install.pip:
-        print("  - the dvdcam-rip package (pip uninstall dvdcam-rip)")
+        will.append("the dvdcam-rip package (pip uninstall dvdcam-rip)")
     if install.folder is not None:
-        if install.folder_is_git:
-            print(f"  - nothing in {install.folder}: it's a git working copy, so it will be kept")
+        if install.folder_deletable:
+            extra = " (a git clone with no changes of your own)" if install.folder_is_git else ""
+            will.append(f"the dvdcam-rip folder{extra}: {install.folder}")
         else:
-            print(f"  - the dvdcam-rip folder: {install.folder}")
+            kept.append(f"the dvdcam-rip folder {install.folder}, because {install.keep_reason()}")
     if not install.found:
-        print("  - (couldn't tell where dvdcam-rip is installed)")
+        kept.append("dvdcam-rip itself: couldn't tell where it's installed")
     if level >= 2:
-        package = winget_package(ffmpeg)
         if ffmpeg is None:
-            print("  - FFmpeg: not found, nothing to remove")
+            kept.append("FFmpeg: not found on this PC")
         elif package:
-            print(f"  - FFmpeg (winget package {package})")
+            will.append(f"FFmpeg (winget package {package})")
         else:
-            print(f"  - FFmpeg: NOT removed, it wasn't installed with winget ({ffmpeg})")
+            kept.append(f"FFmpeg at {ffmpeg}: it wasn't installed with winget")
     if level == 3:
-        print("  - Python: Windows Settings will open so you can uninstall it yourself")
+        will.append("Python: Windows Settings will open so you can uninstall it yourself")
+
+    if will:
+        print("\nThis will remove:")
+        for line in will:
+            print(f"  - {line}")
+    if kept:
+        print("\nThis will be kept:")
+        for line in kept:
+            print(f"  - {line}")
+    if not will:
+        print("\nThere's nothing dvdcam-rip can remove automatically. You can delete what's listed")
+        print("above yourself (see \"Removing dvdcam-rip\" in the README).")
+        return False
     videos = output
     if output is not None and output.parent.name == "dvdcam-rip":
         videos = output.parent  # the default place, holding every disc's folder
-    print("Your converted videos" + (f" in {videos}" if videos else "") + " and your disc files are NOT touched.")
+    print("\nYour converted videos" + (f" in {videos}" if videos else "") + " and your disc files are NOT touched.")
 
     if not ask_no("Remove these?"):
         print("Cancelled. Nothing was removed.")
         return False
 
     print("\nRemoving...")
-    steps = remove_script(install)
+    steps = remove_script(install) if install.found else []
     if level >= 2:
         steps.append(remove_ffmpeg(ffmpeg))
     if level == 3:

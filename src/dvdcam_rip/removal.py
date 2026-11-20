@@ -2,9 +2,10 @@
 
 What can be removed, and how:
 - dvdcam-rip installed with pip: `python -m pip uninstall dvdcam-rip`.
-- dvdcam-rip downloaded as a folder (ZIP): that folder is deleted. A folder
-  that is a git repository (someone's working copy) is never deleted
-  automatically; the user is told to delete it themselves.
+- dvdcam-rip downloaded as a folder (ZIP, or a git clone): that folder is
+  deleted. A git clone is deleted only if it holds nothing of the user's own:
+  no changed or added files, no commits that aren't on a remote, no stashes.
+  Otherwise it's kept and the user is told why.
 - FFmpeg, only when it was installed with winget: `winget uninstall <id>`.
   Any other FFmpeg is left alone and its location is shown.
 - Python is never removed automatically (it may be used by other programs,
@@ -18,6 +19,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import stat
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -32,10 +34,22 @@ class Install:
     pip: bool  # installed as a package (pip / pip install git+...)
     folder: Path | None  # the downloaded dvdcam-rip folder, if running from one
     folder_is_git: bool = False
+    # For a git clone: what of the user's own it holds ([] = nothing, so it's
+    # safe to delete); None = couldn't check (git missing), so it's kept.
+    git_changes: list[str] | None = None
 
     @property
     def found(self) -> bool:
         return self.pip or self.folder is not None
+
+    @property
+    def folder_deletable(self) -> bool:
+        return self.folder is not None and (not self.folder_is_git or self.git_changes == [])
+
+    def keep_reason(self) -> str:
+        if self.git_changes is None:
+            return "it's a git clone and git isn't available to check it for changes of your own"
+        return "it's a git clone with " + " and ".join(self.git_changes)
 
 
 def find_folder(module_file: str | Path) -> Path | None:
@@ -61,7 +75,41 @@ def detect_install(module_file: str | Path | None = None) -> Install:
     except metadata.PackageNotFoundError:
         pip = False
     folder = find_folder(module_file)
-    return Install(pip, folder, bool(folder and (folder / ".git").exists()))
+    is_git = bool(folder and (folder / ".git").exists())
+    changes = git_changes(folder) if is_git and folder else None
+    return Install(pip, folder, is_git, changes)
+
+
+def git_changes(folder: Path, run=None) -> list[str] | None:
+    """What a git clone holds that isn't on its remote: changed or added
+    files, commits not pushed, stashes. [] when there's nothing; None when it
+    can't be checked."""
+    run = run or _run
+    if shutil.which("git") is None and run is _run:
+        return None
+
+    def git(*args: str) -> str | None:
+        try:
+            r = run(["git", "-C", str(folder), *args])
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return r.stdout if r.returncode == 0 else None
+
+    status = git("status", "--porcelain")
+    unpushed = git("log", "--branches", "--not", "--remotes", "--oneline")
+    stashes = git("stash", "list")
+    if status is None or unpushed is None or stashes is None:
+        return None
+    changes = []
+    files = [line for line in status.splitlines() if line.strip()]
+    if files:
+        changes.append(f"{len(files)} changed or added file{'s' if len(files) != 1 else ''}")
+    commits = [line for line in unpushed.splitlines() if line.strip()]
+    if commits:
+        changes.append(f"{len(commits)} commit{'s' if len(commits) != 1 else ''} not pushed")
+    if stashes.strip():
+        changes.append("stashed changes")
+    return changes
 
 
 def winget_package(ffmpeg: Path | None) -> str | None:
@@ -101,11 +149,11 @@ def remove_script(install: Install, run=_run) -> list[Step]:
             detail = (r.stderr or r.stdout).strip().splitlines()[-1:] or ["unknown error"]
             steps.append(Step("failed", f"pip couldn't uninstall dvdcam-rip: {detail[0]}"))
     if install.folder is not None:
-        if install.folder_is_git:
-            steps.append(Step("skipped", f"{install.folder} is a git working copy (it may hold your own "
-                                         "changes), so it wasn't deleted. Delete it yourself if you want."))
-        else:
+        if install.folder_deletable:
             steps.append(delete_folder(install.folder))
+        else:
+            steps.append(Step("skipped", f"{install.folder} was kept because {install.keep_reason()}. "
+                                         "Delete it yourself if you don't need them."))
     if not steps:
         steps.append(Step("skipped", "couldn't tell how dvdcam-rip was installed; nothing was removed"))
     return steps
@@ -118,8 +166,13 @@ def delete_folder(folder: Path) -> Step:
         pass
     failed: list[str] = []
 
-    def note(_func, path, _exc):
-        failed.append(str(path))
+    def note(func, path, _exc):
+        # git marks its object files read-only, which Windows won't delete
+        try:
+            os.chmod(path, stat.S_IWRITE)
+            func(path)
+        except OSError:
+            failed.append(str(path))
 
     if sys.version_info >= (3, 12):
         shutil.rmtree(folder, onexc=note)

@@ -1,4 +1,5 @@
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -109,6 +110,66 @@ class RemoveTests(Temp):
         step = guide_python(open_settings=False)
         self.assertEqual(step.status, "next")
         self.assertIn(sys.version.split()[0], step.text)
+
+
+@unittest.skipUnless(shutil.which("git"), "needs git")
+class GitCloneTests(Temp):
+    """A clone made just to use dvdcam-rip can go; one with your own work stays."""
+
+    def git(self, *args, cwd=None):
+        subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True,
+                       env={**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com",
+                            "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.com"})
+
+    def clone(self) -> Path:
+        """A "GitHub" repo with dvdcam-rip in it, and a fresh clone of it."""
+        origin = self.tmp / "origin"
+        fake_checkout(origin)
+        self.git("init", "-q", cwd=origin)
+        self.git("add", ".", cwd=origin)
+        self.git("commit", "-q", "-m", "initial", cwd=origin)
+        clone = self.tmp / "dvdcam-rip"
+        self.git("clone", "-q", str(origin), str(clone))
+        return clone
+
+    def install(self, folder: Path) -> Install:
+        with mock.patch.object(removal.metadata, "distribution", side_effect=removal.metadata.PackageNotFoundError):
+            return detect_install(folder / "src" / "dvdcam_rip" / "__init__.py")
+
+    def test_clean_clone_is_deleted_read_only_files_included(self):
+        clone = self.clone()
+        install = self.install(clone)
+        self.assertEqual(install.git_changes, [])
+        self.assertTrue(install.folder_deletable)
+        objects = [p for p in (clone / ".git" / "objects").rglob("*") if p.is_file()]
+        self.assertTrue(objects)
+        for p in objects:  # what git does on Windows; a plain delete would fail
+            os.chmod(p, 0o444)
+        steps = remove_script(install)
+        self.assertEqual([s.status for s in steps], ["done"], steps)
+        self.assertFalse(clone.exists())
+
+    def test_clone_with_changes_is_kept(self):
+        clone = self.clone()
+        (clone / "pyproject.toml").write_text('[project]\nname = "dvdcam-rip"\n# my tweak\n')
+        (clone / "notes.txt").write_text("mine")
+        install = self.install(clone)
+        self.assertEqual(install.git_changes, ["2 changed or added files"])
+        steps = remove_script(install)
+        self.assertEqual(steps[0].status, "skipped")
+        self.assertIn("2 changed or added files", steps[0].text)
+        self.assertTrue((clone / "notes.txt").exists())
+
+    def test_unpushed_commit_and_stash_are_kept(self):
+        clone = self.clone()
+        (clone / "extra.txt").write_text("x")
+        self.git("add", ".", cwd=clone)
+        self.git("commit", "-q", "-m", "local", cwd=clone)
+        (clone / "extra.txt").write_text("y")
+        self.git("stash", "-q", cwd=clone)
+        install = self.install(clone)
+        self.assertEqual(install.git_changes, ["1 commit not pushed", "stashed changes"])
+        self.assertFalse(install.folder_deletable)
 
 
 if __name__ == "__main__":

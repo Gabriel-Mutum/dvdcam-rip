@@ -282,13 +282,36 @@ class EndMenuTests(CliFlowTests):
         opened.assert_called_once_with(self.tmp / "out")
 
     def test_remove_cancel_and_default_no(self):
+        from dvdcam_rip.removal import Install
         _, out, _ = self.run_cli(answers=["y", "1", "3", "4", "4"])  # Cancel in the submenu
         self.assertIn("Cancelled. Nothing was removed.", out)
         removed = mock.patch.object(cli, "remove_script")
-        with removed as remove:
+        installed = mock.patch.object(cli, "detect_install", return_value=Install(True, None))
+        with removed as remove, installed:
             _, out, _ = self.run_cli(answers=["y", "1", "3", "1", "", "4"])  # Enter = no
         remove.assert_not_called()
         self.assertIn("Cancelled. Nothing was removed.", out)
+
+    def test_nothing_removable_goes_back_without_asking(self):
+        from dvdcam_rip.removal import Install
+        kept = Install(False, Path("C:/x/dvdcam-rip"), True, ["3 changed or added files"])
+        patches = [mock.patch.object(cli, "detect_install", return_value=kept)]
+        code, out, _ = self.run_cli(answers=["y", "1", "3", "1", "4"], extra=patches)
+        self.assertEqual(code, 0)
+        self.assertIn("This will be kept:", out)
+        self.assertIn("it's a git clone with 3 changed or added files", out)
+        self.assertIn("There's nothing dvdcam-rip can remove automatically", out)
+        self.assertFalse(any("Remove these?" in p for p in self.prompts))
+        self.assertEqual(out.count("What next?"), 2)  # back to the menu
+
+    def test_clean_clone_is_offered_for_removal(self):
+        from dvdcam_rip.removal import Install, Step
+        clean = Install(False, Path("C:/x/dvdcam-rip"), True, [])
+        patches = [mock.patch.object(cli, "detect_install", return_value=clean),
+                   mock.patch.object(cli, "remove_script", return_value=[Step("done", "folder deleted")])]
+        _, out, _ = self.run_cli(answers=["y", "1", "3", "1", "y", ""], extra=patches)
+        self.assertIn("the dvdcam-rip folder (a git clone with no changes of your own)", out)
+        self.assertIn("[done]  folder deleted", out)
 
     def test_remove_everything_gives_feedback(self):
         from dvdcam_rip.removal import Install, Step
