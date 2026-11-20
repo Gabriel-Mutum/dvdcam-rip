@@ -14,31 +14,33 @@ It reads finalized and **unfinalized** discs, **DVD-VR** discs (DVD-RAM / DVD-RW
 
 Click **Start**, type **Terminal**, and press **Enter**. Every step below happens in this one window. Type or paste each command and press **Enter**.
 
-### 2. Install Python and FFmpeg
+### 2. Install Python
 
 ```powershell
-winget install Python.Python.3.13 --override "/quiet PrependPath=1 Include_launcher=1"
+winget install Python.Python.3.13 --override "/quiet PrependPath=1"
+```
+
+The part in quotes makes the installer add Python to PATH, so the `python` command works. Answer **Y** if winget asks you to accept its terms. Skip this step if you already have Python.
+
+### 3. Install FFmpeg
+
+```powershell
 winget install Gyan.FFmpeg
 ```
 
-Answer **Y** if winget asks to accept its terms. Skip either line if you already have it. (`PrependPath=1` makes the installer add Python to PATH, so the `python` command works.)
+FFmpeg does the actual video copying. Skip this step if you already have it.
 
-### 3. Let this window find them
+### 4. Refresh this window
 
-Windows only tells a window about newly installed programs when it opens. This line refreshes the list in the window you already have, so there's no need to open a new one:
+A terminal only notices new programs when it opens. This line updates the window you already have, so you don't need to open a new one:
 
 ```powershell
 $env:Path = [Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [Environment]::GetEnvironmentVariable("Path","User")
 ```
 
-Check that both work (each prints a version number):
+To check, `python --version` should print a version number.
 
-```powershell
-python --version
-ffmpeg -version
-```
-
-### 4. Go to the folder where you want your videos
+### 5. Go to the folder where you want your videos
 
 `ls` lists what's in the current folder, and `cd` moves into another one:
 
@@ -49,7 +51,7 @@ cd ~\Videos
 
 The videos will be saved here, in `dvdcam-rip output\<disc name>`.
 
-### 5. Install dvdcam-rip
+### 6. Install dvdcam-rip
 
 ```powershell
 python -m pip install https://github.com/Gabriel-Mutum/dvdcam-rip/archive/refs/heads/main.zip
@@ -57,7 +59,7 @@ python -m pip install https://github.com/Gabriel-Mutum/dvdcam-rip/archive/refs/h
 
 This downloads and installs it straight from GitHub (no git needed) and adds the `dvdcam-rip` command.
 
-### 6. Run it on your disc
+### 7. Run it on your disc
 
 Type `dvdcam-rip`, a space, and where the disc is. That can be the DVD drive, a folder with the copied disc files (`VIDEO_TS` or `DVD_RTAV`), or an `.iso` image:
 
@@ -90,7 +92,7 @@ Found 12 recordings, 22m38s in total, 983.4 MB:
    12        3s     2.2 MB  ch 1.12    Recording 12 (3s).mp4
 ```
 
-### 7. Check the list and answer
+### 8. Check the list and answer
 
 ```
 Does this look right? Convert 12 recordings? [Y/n]
@@ -108,7 +110,7 @@ Does this look right? Convert 12 recordings? [Y/n]
     - report a problem:             https://github.com/Gabriel-Mutum/dvdcam-rip/issues
   ```
 
-### 8. Choose the format
+### 9. Choose the format
 
 ```
 Which format?
@@ -119,7 +121,7 @@ Choose 1 or 2 [1]:
 
 Press **Enter** (or **1**) for the exact copy, or **2** for files that play on iPhones and Macs.
 
-### 9. Wait while it converts
+### 10. Wait while it converts
 
 ```
 Output folder: C:\Users\you\Videos\dvdcam-rip output\DVD_VIDEO
@@ -141,7 +143,7 @@ A list of the files is in recordings.csv; technical details are in dvdcam-rip.lo
 
 If you stop it with **Ctrl+C**, run the same command again: it skips what's already done and continues.
 
-### 10. Choose what's next
+### 11. Choose what's next
 
 ```
 What next?
@@ -151,12 +153,12 @@ What next?
   4  Exit
 ```
 
-- **1 · Convert another disc**: drag the next disc folder, DVD drive or ISO into the window and press Enter (or type a path like `D:\`). Steps 7 to 10 repeat.
+- **1 · Convert another disc**: drag the next disc folder, DVD drive or ISO into the window and press Enter (or type a path like `D:\`). Steps 8 to 11 repeat.
 - **2 · Open the videos folder**: opens it in File Explorer, then shows this menu again.
 - **3 · Remove dvdcam-rip from this PC...**: see [Removing dvdcam-rip](#removing-dvdcam-rip). Nothing is removed without asking.
 - **4 · Exit**: back to the terminal prompt.
 
-To update dvdcam-rip later, run step 5 again with `--force-reinstall` added after `install`.
+To update dvdcam-rip later, run step 6 again with `--force-reinstall` added after `install`.
 
 ---
 
@@ -164,7 +166,7 @@ To update dvdcam-rip later, run step 5 again with `--force-reinstall` added afte
 
 ### Without typing commands: download and drag and drop (Windows)
 
-1. Install Python and FFmpeg (steps 1–3 above, or Python from [python.org](https://www.python.org/downloads/) with **"Add python.exe to PATH"** ticked).
+1. Install Python and FFmpeg (steps 1–4 above, or Python from [python.org](https://www.python.org/downloads/) with **"Add python.exe to PATH"** ticked).
 2. On this page, click the green **Code** button → **Download ZIP**, and unzip it, e.g. to `Documents\dvdcam-rip`. (Or `git clone https://github.com/Gabriel-Mutum/dvdcam-rip.git`.)
 3. Drag the disc folder, the DVD drive or the ISO onto **`dvdcam-rip.bat`** in that folder. The same list, questions and menu appear in a new window.
 
@@ -172,7 +174,7 @@ The videos are saved **next to the dvdcam-rip folder**, in `dvdcam-rip output\<d
 
 ### macOS and Linux
 
-Install FFmpeg (`brew install ffmpeg` or `sudo apt install ffmpeg`) and Python 3.11+, then do steps 4–6 with the mounted disc or a copied folder, e.g. `dvdcam-rip "/Volumes/DVD_VIDEO"`.
+Install FFmpeg (`brew install ffmpeg` or `sudo apt install ffmpeg`) and Python 3.11+, then do steps 5–7 with the mounted disc or a copied folder, e.g. `dvdcam-rip "/Volumes/DVD_VIDEO"`.
 
 ---
 
@@ -312,7 +314,7 @@ Each disc's folder also gets:
 
 | Problem | What to do |
 |---|---|
-| `python` isn't recognized, or opens the Microsoft Store | Run the PATH line from step 3. If Python was installed earlier without "Add to PATH", use `py` instead of `python` (e.g. `py -m pip install …`, `py -m dvdcam_rip "D:\"`). |
+| `python` isn't recognized, or opens the Microsoft Store | Run the line from step 4. If Python was installed earlier without "Add to PATH", use `py` instead of `python` (e.g. `py -m pip install …`, `py -m dvdcam_rip "D:\"`). |
 | `dvdcam-rip` isn't recognized | Use `python -m dvdcam_rip "D:\"` (or `py -m dvdcam_rip "D:\"`). It's the same program; Python's command folder just isn't on PATH. |
 | "FFmpeg is needed but wasn't found" | Run `winget install Gyan.FFmpeg`, or pass `--ffmpeg PATH`. |
 | "no DVD video found" | Point it at the folder that contains `VIDEO_TS` or `DVD_RTAV`, at those folders themselves, or at an `.iso`. |
