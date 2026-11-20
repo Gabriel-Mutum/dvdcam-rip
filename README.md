@@ -51,13 +51,25 @@ This downloads and installs it straight from GitHub (no git needed). `py` is the
 
 ### 6. Run it on your disc
 
-Type `py -m dvdcam_rip`, a space, and where the disc is. That can be the DVD drive, a folder with the copied disc files (`VIDEO_TS` or `DVD_RTAV`), or an `.iso` image:
+Type `py -m dvdcam_rip`, a space, and then **where your disc is**, in quotes. Use whichever of these matches what you have:
+
+| What you have | What to type (example) |
+|---|---|
+| The disc in your DVD drive | `py -m dvdcam_rip "D:\"` |
+| The disc's files copied to your PC: a folder with `VIDEO_TS` in it, or the `.IFO`/`.VOB` files themselves | `py -m dvdcam_rip "C:\Users\YourName\Downloads\cameraFootage"` |
+| An ISO image of the disc | `py -m dvdcam_rip "C:\Users\YourName\Downloads\holiday.iso"` |
+
+Replace the example with your own location:
+
+- **DVD drive letter:** open File Explorer → *This PC*. The DVD drive is usually `D:` or `E:`. Type it as `"D:\"`.
+- **Folder or ISO:** in File Explorer, hold **Shift**, right-click the folder or ISO file, and choose **Copy as path**. Then paste it into the terminal (right-click or **Ctrl+V**). Or just drag the folder or file from File Explorer into the terminal window.
+- Keep the **quotes** around the location; they're needed when it has spaces, like `"Video Camera"`.
+
+For example, if you copied the disc into a folder called `cameraFootage` in your Downloads:
 
 ```powershell
-py -m dvdcam_rip "D:\"
+py -m dvdcam_rip "C:\Users\YourName\Downloads\cameraFootage"
 ```
-
-Tip: type `py -m dvdcam_rip ` (with the space), then drag the disc folder or ISO from File Explorer into the terminal to paste its path.
 
 It lists what's on the disc:
 
