@@ -1,6 +1,8 @@
-# dvdcam-rip
+# dvdcam-rip: convert camcorder DVDs and ISO files to MP4
 
 Turn the discs from DVD camcorders (Hitachi DZ-MV, Sony DCR-DVD Handycams, Panasonic, Canon…) into **one MP4 file per recording**, either as an exact copy of the disc or as iPhone-friendly H.264.
+
+Got a box of mini DVDs from an old camcorder, or a folder of `VOB` and `IFO` files you can't play? dvdcam-rip converts camcorder DVD to MP4, VOB to MP4 and DVD ISO to MP4, splitting the disc into the separate clips you recorded instead of one long video.
 
 It reads finalized and **unfinalized** discs, **DVD-VR** discs (DVD-RAM / DVD-RW in VR mode) and **ISO images**. The disc itself or a copy of its files works too. The original files are only ever read, never changed.
 
