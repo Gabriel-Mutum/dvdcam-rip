@@ -4,6 +4,8 @@ Turn the discs from DVD camcorders (Hitachi DZ-MV, Sony DCR-DVD Handycams, Panas
 
 It reads finalized and **unfinalized** discs, **DVD-VR** discs (DVD-RAM / DVD-RW in VR mode) and **ISO images**. The disc itself or a copy of its files works too. The original files are only ever read, never changed.
 
+**Free and open source (MIT license).** Anyone may use it, copy it, change it, fork it or build on it, including in commercial projects. See [License](#license).
+
 ---
 
 ## Quick start (Windows)
@@ -254,6 +256,22 @@ When the disc stores the date and time of each recording, it's used to:
 | An unfinalized disc in the drive can't be read | Finalize it in the camera, or make an ISO image of it with a disc imaging tool and use the ISO. |
 | The videos don't play on iPhone/Mac | Convert again and choose format **2 · H.264**. |
 
+## Removing dvdcam-rip
+
+dvdcam-rip uses only Python's standard library: it installs no extra Python packages and doesn't touch system settings. To return your PC to how it was:
+
+1. **dvdcam-rip itself:** delete the dvdcam-rip folder. If you installed the command with `python -m pip install .`, also run:
+   ```bash
+   python -m pip uninstall dvdcam-rip
+   ```
+2. **FFmpeg**, only if you installed it for this and nothing else uses it:
+   ```bash
+   winget uninstall Gyan.FFmpeg
+   ```
+3. **Python**, only if you installed it for this: *Settings → Apps → Installed apps → Python 3.x → Uninstall*.
+
+Your converted videos in `Downloads\dvdcam-rip` are yours to keep or delete; nothing else is left behind.
+
 ## How it works
 
 See [docs/research.md](docs/research.md) for the details and measurements. In short:
@@ -272,3 +290,16 @@ python -m unittest discover -s tests
 ```
 
 Tests build small synthetic discs (`tests/ifo_builder.py`, `tests/vr_builder.py`, and synthetic NAV packs for scanning), plus ISO images through Windows' IMAPI2 when it's available. Real discs can't be committed. Put test discs in `samples/` (git-ignored); home videos never go in the repo.
+
+## Contributing and forking
+
+You're welcome to fork dvdcam-rip, adapt it to your own needs, or build something new on top of it. Improvements are welcome back too:
+
+- **Your camera works differently?** [Open an issue](https://github.com/Gabriel-Mutum/dvdcam-rip/issues) with the camera model and the output of `dvdcam-rip "<disc>" --list --split cell --verbose`. That's often enough to add support without sharing any video.
+- **Pull requests** are welcome. Please keep the safety rules (read-only source, never overwrite) and add a test.
+
+## License
+
+dvdcam-rip is released under the [MIT License](LICENSE): you may use, copy, modify, merge, publish, distribute, sublicense and sell it, for any purpose, as long as the copyright notice and license text are kept. It comes with no warranty.
+
+FFmpeg is a separate program with its own license (LGPL/GPL). dvdcam-rip runs it but doesn't include it.
