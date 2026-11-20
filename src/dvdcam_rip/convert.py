@@ -60,9 +60,62 @@ FORMATS = ("original", "h264")
 VIDEO_CODEC = {"original": "mpeg2video", "h264": "h264"}
 
 
-def default_output(media: Media, fmt: str = "original") -> Path:
+OUTPUT_DIR = "dvdcam-rip output"  # holds one folder per disc
+
+
+def _system_folder(path: Path) -> bool:
+    roots = [os.environ.get(v) for v in ("SystemRoot", "ProgramFiles", "ProgramFiles(x86)", "ProgramData")]
+    p = str(path.resolve()).lower()
+    return any(r and (p == r.lower() or p.startswith(r.lower().rstrip("\\") + "\\")) for r in roots)
+
+
+def _usable(base: Path, protect: Path | None) -> bool:
+    """Can the output folder go in `base`? Not inside the disc, not a system
+    folder, and writable (checked with a temporary file that's removed at once)."""
+    try:
+        if not base.is_dir() or _system_folder(base):
+            return False
+        if protect is not None:
+            b, root = base.resolve(), protect.resolve()
+            if b == root or root in b.parents:
+                return False
+        import tempfile
+
+        with tempfile.TemporaryFile(dir=base):
+            pass
+        return True
+    except OSError:
+        return False
+
+
+def output_base(protect: Path | None = None, tool_folder: Path | None = None,
+                cwd: Path | None = None) -> tuple[Path, str | None]:
+    """Where "dvdcam-rip output" goes, and a note if it isn't the usual place.
+
+    - Downloaded folder (ZIP / git clone, e.g. used with dvdcam-rip.bat): next
+      to that folder, so it survives removing dvdcam-rip.
+    - Installed with pip: the folder the terminal is in.
+    - If that can't be used (it's the disc, a system folder, or read-only, like
+      a DVD drive): Downloads.
+    """
+    if tool_folder is None:
+        from .removal import find_folder
+
+        tool_folder = find_folder(Path(__file__))
+    here = cwd or Path.cwd()
+    if tool_folder is not None:
+        first, what = tool_folder.parent, f"the folder next to dvdcam-rip ({tool_folder.parent})"
+    else:
+        first, what = here, f"the current folder ({here})"
+    if _usable(first, protect):
+        return first / OUTPUT_DIR, None
+    return downloads_folder() / OUTPUT_DIR, f"{what} can't be used, so the videos go to Downloads"
+
+
+def default_output(media: Media, fmt: str = "original") -> tuple[Path, str | None]:
     name = media.name + (" (H.264)" if fmt == "h264" else "")
-    return downloads_folder() / "dvdcam-rip" / name
+    base, note = output_base(media.protect)
+    return base / name, note
 
 
 def existing_format(tools: Tools, path: Path) -> str | None:

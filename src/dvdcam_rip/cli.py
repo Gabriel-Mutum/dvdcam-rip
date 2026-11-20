@@ -13,6 +13,7 @@ from pathlib import Path
 from . import __version__
 from .convert import (
     FORMATS,
+    OUTPUT_DIR,
     SPACE_MARGIN,
     Job,
     Log,
@@ -55,7 +56,9 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument("source", help="the disc (e.g. D:\\), a folder with the copied disc files, or an ISO image")
-    p.add_argument("-o", "--output", help="output folder (default: Downloads\\dvdcam-rip\\<disc name>)")
+    p.add_argument("-o", "--output",
+                   help='output folder (default: "dvdcam-rip output\\<disc name>" in the current folder, '
+                        "or next to the dvdcam-rip folder when run from a download)")
     p.add_argument("--list", action="store_true", help="only list the recordings, convert nothing")
     p.add_argument("--json", action="store_true", help="print what's on the disc as JSON, convert nothing")
     p.add_argument("--dry-run", action="store_true", help="show what would be created, then stop")
@@ -366,7 +369,7 @@ def removal_menu(ui: Ui, output: Path | None) -> bool:
         print("above yourself (see \"Removing dvdcam-rip\" in the README).")
         return False
     videos = output
-    if output is not None and output.parent.name == "dvdcam-rip":
+    if output is not None and output.parent.name == OUTPUT_DIR:
         videos = output.parent  # the default place, holding every disc's folder
     print("\nYour converted videos" + (f" in {videos}" if videos else "") + " and your disc files are NOT touched.")
 
@@ -490,7 +493,11 @@ def run_disc(args, ui: Ui, source: str) -> tuple[int, Path | None]:
         return EXIT_NO_FFMPEG, output
 
     # 4. Work out the output and check it
-    output = Path(args.output).expanduser() if args.output else default_output(media, fmt)
+    where_note = None
+    if args.output:
+        output = Path(args.output).expanduser()
+    else:
+        output, where_note = default_output(media, fmt)
     try:
         check_output_location(output, media)
     except ValueError as e:
@@ -513,6 +520,8 @@ def run_disc(args, ui: Ui, source: str) -> tuple[int, Path | None]:
 
     todo = [j for j in jobs if j.status != "skipped"]
     ui.always(f"\nOutput folder: {output}")
+    if where_note:
+        ui.always(f"({where_note})")
     if len(todo) < len(jobs):
         ui.always(f"{len(jobs) - len(todo)} already converted and will be skipped "
                   "(use --overwrite to redo them).")

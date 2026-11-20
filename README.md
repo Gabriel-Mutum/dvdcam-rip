@@ -8,41 +8,72 @@ It reads finalized and **unfinalized** discs, **DVD-VR** discs (DVD-RAM / DVD-RW
 
 ---
 
-## Quick start (Windows)
+## Quick start: everything in one terminal window (Windows)
 
-### 1. Install Python
+### 1. Open a terminal
 
-Download Python 3.11 or newer from [python.org/downloads](https://www.python.org/downloads/). In the installer, tick **"Add python.exe to PATH"**, then click *Install Now*.
+Click **Start**, type **Terminal**, and press **Enter**. Every step below happens in this one window. Type or paste each command and press **Enter**.
 
-### 2. Install FFmpeg
+### 2. Install Python and FFmpeg
 
-Open **Terminal** (or PowerShell) and run:
-
-```bash
+```powershell
+winget install Python.Python.3.13 --override "/quiet PrependPath=1 Include_launcher=1"
 winget install Gyan.FFmpeg
 ```
 
-### 3. Download dvdcam-rip
+Answer **Y** if winget asks to accept its terms. Skip either line if you already have it. (`PrependPath=1` makes the installer add Python to PATH, so the `python` command works.)
 
-On this page, click the green **Code** button → **Download ZIP**, and unzip it, for example to `Documents\dvdcam-rip`.
-(With git: `git clone https://github.com/Gabriel-Mutum/dvdcam-rip.git`)
+### 3. Let this window find them
 
-### 4. Get your disc ready
+Windows only tells a window about newly installed programs when it opens. This line refreshes the list in the window you already have, so there's no need to open a new one:
 
-Any of these works:
+```powershell
+$env:Path = [Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [Environment]::GetEnvironmentVariable("Path","User")
+```
 
-- the disc in your DVD drive;
-- a copy of the disc's files on your PC: the folder with `VIDEO_TS` (or `DVD_RTAV`), or the `.IFO`/`.VOB` files themselves;
-- an `.iso` image of the disc.
+Check that both work (each prints a version number):
 
-### 5. Drag it onto `dvdcam-rip.bat`
+```powershell
+python --version
+ffmpeg -version
+```
 
-Drag the disc folder, the DVD drive or the ISO file onto **`dvdcam-rip.bat`** in the dvdcam-rip folder. A window opens and lists what's on the disc:
+### 4. Go to the folder where you want your videos
+
+`ls` lists what's in the current folder, and `cd` moves into another one:
+
+```powershell
+ls
+cd ~\Videos
+```
+
+The videos will be saved here, in `dvdcam-rip output\<disc name>`.
+
+### 5. Install dvdcam-rip
+
+```powershell
+python -m pip install https://github.com/Gabriel-Mutum/dvdcam-rip/archive/refs/heads/main.zip
+```
+
+This downloads and installs it straight from GitHub (no git needed) and adds the `dvdcam-rip` command.
+
+### 6. Run it on your disc
+
+Type `dvdcam-rip`, a space, and where the disc is. That can be the DVD drive, a folder with the copied disc files (`VIDEO_TS` or `DVD_RTAV`), or an `.iso` image:
+
+```powershell
+dvdcam-rip "D:\"
+```
+
+Tip: type `dvdcam-rip ` (with the space), then drag the disc folder or ISO from File Explorer into the terminal to paste its path.
+If the terminal says `dvdcam-rip` isn't recognized, use `python -m dvdcam_rip "D:\"` instead; it's the same program.
+
+It lists what's on the disc:
 
 ```
-dvdcam-rip 0.4.0
+dvdcam-rip 0.5.0
 
-Source:  C:\Users\you\Downloads\Video Camera
+Source:  D:\
 Type:    DVD-Video
 Camera:  DZ-MV750MA (HITACHI)
 Video:   MPEG-2 704x480 NTSC 4:3
@@ -59,7 +90,7 @@ Found 12 recordings, 22m38s in total, 983.4 MB:
    12        3s     2.2 MB  ch 1.12    Recording 12 (3s).mp4
 ```
 
-### 6. Check the list and answer
+### 7. Check the list and answer
 
 ```
 Does this look right? Convert 12 recordings? [Y/n]
@@ -71,13 +102,13 @@ Does this look right? Convert 12 recordings? [Y/n]
   ```
   OK, nothing was converted and no files were written.
   If the list isn't what you expected:
-    - see every piece of the disc:  dvdcam-rip "C:\Users\you\Downloads\Video Camera" --list --split cell
-    - find them from the video:     dvdcam-rip "C:\Users\you\Downloads\Video Camera" --scan
-    - convert only some of them:    dvdcam-rip "C:\Users\you\Downloads\Video Camera" --only 3,5-7
+    - see every piece of the disc:  dvdcam-rip "D:\" --list --split cell
+    - find them from the video:     dvdcam-rip "D:\" --scan
+    - convert only some of them:    dvdcam-rip "D:\" --only 3,5-7
     - report a problem:             https://github.com/Gabriel-Mutum/dvdcam-rip/issues
   ```
 
-### 7. Choose the format
+### 8. Choose the format
 
 ```
 Which format?
@@ -88,10 +119,10 @@ Choose 1 or 2 [1]:
 
 Press **Enter** (or **1**) for the exact copy, or **2** for files that play on iPhones and Macs.
 
-### 8. Wait while it converts
+### 9. Wait while it converts
 
 ```
-Output folder: C:\Users\you\Downloads\dvdcam-rip\Video Camera
+Output folder: C:\Users\you\Videos\dvdcam-rip output\DVD_VIDEO
 Format: original MPEG-2. The video is copied as-is, the exact quality of the disc.
 The original disc files are only read, never changed.
 
@@ -104,13 +135,13 @@ The original disc files are only read, never changed.
 Finished in 11s: 12 converted.
 
 Your videos are in:
-  C:\Users\you\Downloads\dvdcam-rip\Video Camera
+  C:\Users\you\Videos\dvdcam-rip output\DVD_VIDEO
 A list of the files is in recordings.csv; technical details are in dvdcam-rip.log.
 ```
 
-If you stop it with **Ctrl+C**, drag the disc onto `dvdcam-rip.bat` again: it skips what's already done and continues.
+If you stop it with **Ctrl+C**, run the same command again: it skips what's already done and continues.
 
-### 9. Choose what's next
+### 10. Choose what's next
 
 ```
 What next?
@@ -120,30 +151,28 @@ What next?
   4  Exit
 ```
 
-- **1 · Convert another disc**: drag the next disc folder, DVD drive or ISO into the window and press Enter (or type a path like `D:\`). Steps 5 to 9 repeat.
+- **1 · Convert another disc**: drag the next disc folder, DVD drive or ISO into the window and press Enter (or type a path like `D:\`). Steps 7 to 10 repeat.
 - **2 · Open the videos folder**: opens it in File Explorer, then shows this menu again.
 - **3 · Remove dvdcam-rip from this PC...**: see [Removing dvdcam-rip](#removing-dvdcam-rip). Nothing is removed without asking.
-- **4 · Exit**: closes the window.
+- **4 · Exit**: back to the terminal prompt.
+
+To update dvdcam-rip later, run step 5 again with `--force-reinstall` added after `install`.
 
 ---
 
-## Using the command line (Windows, macOS, Linux)
+## Other ways to run it
 
-Install the `dvdcam-rip` command with pip, straight from GitHub. There's no need to download the folder first:
+### Without typing commands: download and drag and drop (Windows)
 
-```bash
-python -m pip install git+https://github.com/Gabriel-Mutum/dvdcam-rip
-```
+1. Install Python and FFmpeg (steps 1–3 above, or Python from [python.org](https://www.python.org/downloads/) with **"Add python.exe to PATH"** ticked).
+2. On this page, click the green **Code** button → **Download ZIP**, and unzip it, e.g. to `Documents\dvdcam-rip`. (Or `git clone https://github.com/Gabriel-Mutum/dvdcam-rip.git`.)
+3. Drag the disc folder, the DVD drive or the ISO onto **`dvdcam-rip.bat`** in that folder. The same list, questions and menu appear in a new window.
 
-(If you already downloaded the folder, `python -m pip install .` from inside it does the same.) To update later, run the same command with `--upgrade`.
+The videos are saved **next to the dvdcam-rip folder**, in `dvdcam-rip output\<disc name>` (e.g. `Documents\dvdcam-rip output\Video Camera`), so removing dvdcam-rip never touches them.
 
-Then run `dvdcam-rip` with the disc, folder or image:
+### macOS and Linux
 
-```bash
-dvdcam-rip "D:\"
-```
-
-It shows the same list, questions and end menu as the drag-and-drop version. On macOS and Linux, install FFmpeg with `brew install ffmpeg` or `sudo apt install ffmpeg`, and point it at the mounted disc or a copied folder, e.g. `dvdcam-rip "/Volumes/DVD_VIDEO"`.
+Install FFmpeg (`brew install ffmpeg` or `sudo apt install ffmpeg`) and Python 3.11+, then do steps 4–6 with the mounted disc or a copied folder, e.g. `dvdcam-rip "/Volumes/DVD_VIDEO"`.
 
 ---
 
@@ -154,7 +183,7 @@ It shows the same list, questions and end menu as the drag-and-drop version. On 
 | Option | What it does |
 |---|---|
 | `SOURCE` | **Required.** The disc (`D:\`), a folder with the copied disc files, a single `.IFO`/`.VOB`/`.VRO` file inside one, or an ISO image. |
-| `-o FOLDER`, `--output FOLDER` | Where to put the videos. Default: `Downloads\dvdcam-rip\<disc name>` (or `<disc name> (H.264)`). |
+| `-o FOLDER`, `--output FOLDER` | Where to put the videos. Default: `dvdcam-rip output\<disc name>` (or `<disc name> (H.264)`) in the current folder, or next to the dvdcam-rip folder when run from a download. See [Where the files go](#where-the-files-go). |
 | `--format original` | Exact MPEG-2 copy, without asking. |
 | `--format h264` | iPhone-friendly H.264, without asking. |
 | `-y`, `--yes` | Ask no questions and show no end menu. Uses the original format unless `--format` is given. |
@@ -255,7 +284,19 @@ When the disc stores the date and time of each recording, it's used to:
 
 ## Where the files go
 
-`Downloads\dvdcam-rip\<disc name>\` for the original format, `Downloads\dvdcam-rip\<disc name> (H.264)\` for H.264. The disc name is the copied folder's name, the ISO's file name, or the DVD's label. Each folder also gets:
+Everything goes in a folder called **`dvdcam-rip output`**, with one folder per disc inside: `<disc name>\` for the original format, `<disc name> (H.264)\` for H.264. The disc name is the copied folder's name, the ISO's file name, or the DVD's label.
+
+Where `dvdcam-rip output` is created:
+
+| How you run dvdcam-rip | Where the videos go | Example |
+|---|---|---|
+| Installed with pip, from a terminal | The folder the terminal is in (where you `cd`'d to) | `C:\Users\you\Videos\dvdcam-rip output\Video Camera` |
+| From a downloaded folder (`dvdcam-rip.bat`, ZIP or git clone) | Next to the dvdcam-rip folder | `C:\Users\you\Documents\dvdcam-rip output\Video Camera` |
+| Either, if that folder can't be used | Downloads (and it says so) | `C:\Users\you\Downloads\dvdcam-rip output\Video Camera` |
+
+"Can't be used" means it's inside the disc folder itself, a Windows system folder (like `C:\Windows\System32`, where admin terminals start), or read-only (like a DVD drive). `-o FOLDER` always overrides all of this.
+
+Each disc's folder also gets:
 
 - `recordings.csv`: every file with its date, source, length, size and status.
 - `dvdcam-rip.log`: technical details (FFmpeg commands and messages) for troubleshooting.
@@ -271,6 +312,8 @@ When the disc stores the date and time of each recording, it's used to:
 
 | Problem | What to do |
 |---|---|
+| `python` isn't recognized, or opens the Microsoft Store | Run the PATH line from step 3. If Python was installed earlier without "Add to PATH", use `py` instead of `python` (e.g. `py -m pip install …`, `py -m dvdcam_rip "D:\"`). |
+| `dvdcam-rip` isn't recognized | Use `python -m dvdcam_rip "D:\"` (or `py -m dvdcam_rip "D:\"`). It's the same program; Python's command folder just isn't on PATH. |
 | "FFmpeg is needed but wasn't found" | Run `winget install Gyan.FFmpeg`, or pass `--ffmpeg PATH`. |
 | "no DVD video found" | Point it at the folder that contains `VIDEO_TS` or `DVD_RTAV`, at those folders themselves, or at an `.iso`. |
 | The list doesn't match what you recorded | Try `--list --split cell` to see every segment, or `--scan` to find recordings from the video. Please [open an issue](https://github.com/Gabriel-Mutum/dvdcam-rip/issues) with the camera model. |
@@ -292,7 +335,7 @@ Choose 1-4: 2
 This will remove:
   - the dvdcam-rip folder: C:\Users\you\Documents\dvdcam-rip
   - FFmpeg (winget package Gyan.FFmpeg)
-Your converted videos in C:\Users\you\Downloads\dvdcam-rip and your disc files are NOT touched.
+Your converted videos in C:\Users\you\Documents\dvdcam-rip output and your disc files are NOT touched.
 
 Remove these? [y/N] y
 
@@ -301,7 +344,7 @@ Removing...
   [done]  FFmpeg removed (winget uninstall Gyan.FFmpeg)
 
 dvdcam-rip has been removed from this PC.
-Your videos are still in C:\Users\you\Downloads\dvdcam-rip
+Your videos are still in C:\Users\you\Documents\dvdcam-rip output
 
 Press Enter to close this window.
 ```

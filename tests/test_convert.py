@@ -1,4 +1,5 @@
 import io
+import os
 import sys
 import tempfile
 import unittest
@@ -14,7 +15,9 @@ from test_ifo import chapters_disc  # noqa: E402
 
 from dvdcam_rip import cli  # noqa: E402
 from dvdcam_rip.convert import (  # noqa: E402
+    OUTPUT_DIR,
     check_output_location,
+    output_base,
     file_name,
     parse_only,
     plan_jobs,
@@ -134,6 +137,50 @@ class DatedNameTests(unittest.TestCase):
         ])
 
 
+class OutputPlaceTests(unittest.TestCase):
+    """Where "dvdcam-rip output" goes by default."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_next_to_a_downloaded_tool_folder(self):
+        tool = self.tmp / "Documents" / "dvdcam-rip"
+        tool.mkdir(parents=True)
+        base, note = output_base(tool_folder=tool, cwd=self.tmp)
+        self.assertEqual(base, self.tmp / "Documents" / OUTPUT_DIR)
+        self.assertIsNone(note)
+
+    def test_current_folder_when_installed_with_pip(self):
+        videos = self.tmp / "Videos"
+        videos.mkdir()
+        with mock.patch("dvdcam_rip.removal.find_folder", return_value=None):
+            base, note = output_base(cwd=videos)
+        self.assertEqual(base, videos / OUTPUT_DIR)
+        self.assertIsNone(note)
+
+    def test_falls_back_to_downloads(self):
+        disc = self.tmp / "Video Camera"
+        disc.mkdir()
+        with mock.patch("dvdcam_rip.removal.find_folder", return_value=None), \
+                mock.patch("dvdcam_rip.convert.downloads_folder", return_value=self.tmp / "Downloads"):
+            # the terminal is inside the disc folder: never write there
+            base, note = output_base(protect=disc, cwd=disc)
+            self.assertEqual(base, self.tmp / "Downloads" / OUTPUT_DIR)
+            self.assertIn("can't be used", note)
+            # a folder that doesn't exist / can't be written (like a DVD drive)
+            base, note = output_base(cwd=self.tmp / "missing")
+            self.assertEqual(base, self.tmp / "Downloads" / OUTPUT_DIR)
+        if os.environ.get("SystemRoot"):  # Windows folders are skipped too
+            with mock.patch("dvdcam_rip.removal.find_folder", return_value=None), \
+                    mock.patch("dvdcam_rip.convert.downloads_folder", return_value=self.tmp):
+                base, _ = output_base(tool_folder=None, cwd=Path(os.environ["SystemRoot"]) / "System32")
+            self.assertEqual(base, self.tmp / OUTPUT_DIR)
+
+
 class CliFlowTests(unittest.TestCase):
     """The interactive flow: list -> "does this look right?" -> format -> convert.
     FFmpeg is mocked: fake outputs contain the name of their format."""
@@ -174,7 +221,7 @@ class CliFlowTests(unittest.TestCase):
             stack.enter_context(mock.patch.object(cli, "has_encoder", return_value=True))
             stack.enter_context(mock.patch.object(cli, "existing_format", side_effect=fake_existing))
             stack.enter_context(mock.patch.object(
-                cli, "default_output", side_effect=lambda d, f: self.tmp / f"default-{d.name}-{f}"))
+                cli, "default_output", side_effect=lambda d, f: (self.tmp / f"default-{d.name}-{f}", None)))
             stack.enter_context(mock.patch.object(cli.sys.stdin, "isatty", return_value=True))
             stack.enter_context(mock.patch("builtins.input", side_effect=fake_input))
             convert = stack.enter_context(mock.patch.object(cli, "convert_one", side_effect=fake_convert))
