@@ -17,7 +17,7 @@ from .convert import (
     OUTPUT_DIR,
     SPACE_MARGIN,
     Job,
-    Log,
+    LOG_NAME,
     check_output_location,
     convert_one,
     default_output,
@@ -28,7 +28,7 @@ from .convert import (
     plan_jobs,
     short_duration,
     space_needed,
-    write_report,
+    write_log,
 )
 from .ffmpeg import FfmpegMissing, find_tools, has_encoder
 from .media import MediaError
@@ -564,9 +564,6 @@ def run_disc(args, ui: Ui, source: str) -> tuple[int, Path | None]:
     except OSError as e:
         ui.error(f"can't create the output folder {output}: {e}")
         return EXIT_INPUT, output
-    log = Log(output / "dvdcam-rip.log")
-    log.write(f"dvdcam-rip {__version__}, FFmpeg {tools.version}, source {media.location}, "
-              f"{media.kind}, camera '{media.camera}', {len(todo)} to convert")
 
     ui.say("")
     started = time.monotonic()
@@ -590,7 +587,7 @@ def run_disc(args, ui: Ui, source: str) -> tuple[int, Path | None]:
             ui.progress(prefix, 0.0, force=True)
             try:
                 convert_one(
-                    job, media, tools, log,
+                    job, media, tools,
                     progress=lambda _j, f, p=prefix: ui.progress(p, f),
                     metadata=metadata,
                     verbose_cmd=(lambda c: ui.detail("\n" + subprocess.list2cmdline(c))) if args.verbose else None,
@@ -599,7 +596,6 @@ def run_disc(args, ui: Ui, source: str) -> tuple[int, Path | None]:
             except (VobError, MediaError, OSError, RuntimeError) as e:
                 job.status = "failed"
                 job.note = str(e)
-                log.write(f"{job.path.name}: FAILED, {e}")
             size = fmt_size(job.path.stat().st_size) if job.path.exists() else ""
             result = {
                 "done": f"done  {size}  ({job.seconds:.1f}s)",
@@ -611,13 +607,11 @@ def run_disc(args, ui: Ui, source: str) -> tuple[int, Path | None]:
                 ui.error(f"{job.path.name}: {job.note}")
     except KeyboardInterrupt:
         interrupted = True
-        log.write("stopped by the user (Ctrl+C)")
 
     # 6. Summary
     elapsed = time.monotonic() - started
-    write_report(output / "recordings.csv", jobs)
-    log.write("finished" if not interrupted else "stopped")
-    log.close()
+    write_log(output, jobs, version=__version__, source=str(media.location), kind=media.kind,
+              camera=media.camera, fmt=fmt, elapsed=elapsed, interrupted=interrupted)
 
     count = {s: sum(1 for j in jobs if j.status == s) for s in ("done", "warning", "skipped", "failed")}
     converted = count["done"] + count["warning"]
@@ -633,9 +627,9 @@ def run_disc(args, ui: Ui, source: str) -> tuple[int, Path | None]:
             parts.append(f"{count['failed']} failed")
         ui.always(f"Finished in {short_duration(elapsed)}: " + ", ".join(parts) + ".")
     if count["warning"]:
-        ui.always(f"{count['warning']} file(s) converted with warnings; see recordings.csv.")
+        ui.always(f"{count['warning']} file(s) converted with warnings; see {LOG_NAME}.")
     ui.always(f"\nYour videos are in:\n  {output}")
-    ui.say("A list of the files is in recordings.csv; technical details are in dvdcam-rip.log.")
+    ui.say(f"A summary is in \"{LOG_NAME}\" in that folder.")
 
     if args.open and converted + count["skipped"]:
         open_folder(output)

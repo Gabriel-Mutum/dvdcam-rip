@@ -76,7 +76,7 @@ py -m dvdcam_rip "C:\Users\YourName\Downloads\cameraFootage"
 It lists what's on the disc:
 
 ```
-dvdcam-rip 0.6.0
+dvdcam-rip 0.7.0
 
 Source:  D:\
 Type:    DVD-Video
@@ -141,7 +141,7 @@ Finished in 11s: 12 converted.
 
 Your videos are in:
   C:\Users\you\Videos\dvdcam-rip output\DVD_VIDEO
-A list of the files is in recordings.csv; technical details are in dvdcam-rip.log.
+A summary is in "dvdcam-rip log.txt" in that folder.
 ```
 
 If you stop it with **Ctrl+C**, run the same command again: it skips what's already done and continues.
@@ -249,7 +249,7 @@ These apply to `py -m dvdcam_rip` and the `dvdcam-rip` command. (`dvdcam-rip.bat
 | Code | Meaning |
 |---|---|
 | 0 | Everything converted (or nothing needed doing) |
-| 1 | Some recordings failed; see `recordings.csv` and `dvdcam-rip.log` |
+| 1 | Some recordings failed; see `dvdcam-rip log.txt` |
 | 2 | Problem with the input or output (disc not found, not enough space, no answer to a question…) |
 | 3 | FFmpeg missing, or missing its H.264 encoder |
 | 130 | Stopped with Ctrl+C |
@@ -285,7 +285,7 @@ When the disc stores the date and time of each recording, it's used to:
 
 - name the files: `2008-07-04 10-15-30 (1m59s).mp4` (two recordings in the same second get `#2`);
 - set the MP4's creation time and the file's date, so photo apps sort the videos correctly;
-- fill the `Recorded` column in the list and in `recordings.csv`.
+- fill the `Recorded` column in the list.
 
 **DVD-VR discs store a date for every recording.** DVD-Video discs (the kind that plays in any DVD player) have no standard place for it. The Hitachi DZ-MV750MA, for example, stores no date anywhere on its DVD-Video discs. Those files are named `Recording 01 (9s).mp4` and so on, in recording order.
 
@@ -305,8 +305,22 @@ Where `dvdcam-rip output` is created:
 
 Each disc's folder also gets:
 
-- `recordings.csv`: every file with its date, source, length, size and status.
-- `dvdcam-rip.log`: technical details (FFmpeg commands and messages) for troubleshooting.
+**`dvdcam-rip log.txt`**: a short summary of each run, added to the end of the file every time:
+
+```
+==== 2026-11-20 12:21 ========================================
+dvdcam-rip 0.7.0
+Disc:    C:\Users\you\Downloads\Video Camera  (DVD-Video, DZ-MV750MA (HITACHI))
+Format:  original MPEG-2 (exact copy)
+Result:  12 converted in 10s
+
+  Recording 01 (9s).mp4         6.1 MB  done
+  Recording 02 (9s).mp4         6.1 MB  done
+  Recording 03 (1m59s).mp4     84.4 MB  done
+  ...
+```
+
+If a recording fails, its line says so, followed by FFmpeg's last few messages explaining why.
 
 ## Safety
 

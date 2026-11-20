@@ -13,15 +13,15 @@ Safety rules, enforced here:
 
 from __future__ import annotations
 
-import csv
 import os
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
@@ -187,6 +187,7 @@ class Job:
     note: str = ""
     seconds: float = 0.0
     duration: float = 0.0  # measured from the output file
+    detail: list[str] = field(default_factory=list)  # FFmpeg's last messages, if it went wrong
 
     @property
     def part(self) -> Path:
@@ -220,19 +221,7 @@ def free_space(folder: Path) -> int:
 # ------------------------------------------------------------- running
 
 
-class Log:
-    """Appends to dvdcam-rip.log in the output folder."""
-
-    def __init__(self, path: Path):
-        self.path = path
-        self.file = open(path, "a", encoding="utf-8")
-
-    def write(self, message: str) -> None:
-        self.file.write(f"{datetime.now():%Y-%m-%d %H:%M:%S}  {message}\n")
-        self.file.flush()
-
-    def close(self) -> None:
-        self.file.close()
+LOG_NAME = "dvdcam-rip log.txt"
 
 
 Progress = Callable[[Job, float], None]
@@ -242,7 +231,6 @@ def convert_one(
     job: Job,
     media: Media,
     tools: Tools,
-    log: Log,
     progress: Progress,
     metadata: dict[str, str],
     verbose_cmd: Callable[[list[str]], None] | None = None,
@@ -267,18 +255,17 @@ def convert_one(
         cmd = encode_command(tools, job.part, metadata)
     else:
         cmd = remux_command(tools, job.part, media.audio, metadata)
-    exp = f"{expected:.3f}s" if expected else "unknown"
-    log.write(f"{job.path.name}: {rec.origin}, {len(rec.cells)} cells, "
-              f"sectors {rec.first_sector}-{rec.last_sector}, expected length {exp}")
-    log.write("command: " + subprocess.list2cmdline(cmd))
     if verbose_cmd:
         verbose_cmd(cmd)
 
     total = rec.size_bytes
     written = 0
     flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+    # FFmpeg's messages go to a temporary file (a pipe could fill up and stall
+    # it); they're only kept, briefly, if something goes wrong.
+    errors = tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace")
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
-                            stderr=log.file, creationflags=flags)
+                            stderr=errors, creationflags=flags)
     try:
         assert proc.stdin is not None
         try:
@@ -293,17 +280,21 @@ def convert_one(
     except BaseException:
         proc.kill()
         proc.wait()
+        errors.close()
         if job.part.exists():
             job.part.unlink()
         raise
 
+    errors.seek(0)
+    messages = [line.strip() for line in errors.read().splitlines() if line.strip()]
+    errors.close()
     job.seconds = time.monotonic() - started
     if code != 0 or not job.part.exists():
         if job.part.exists():
             job.part.unlink()
         job.status = "failed"
-        job.note = f"FFmpeg exited with code {code} (details in {log.path.name})"
-        log.write(f"{job.path.name}: FAILED, ffmpeg exit code {code}")
+        job.note = "FFmpeg stopped with an error"
+        job.detail = messages[-3:]
         return
 
     # Check the result before giving it its final name.
@@ -328,23 +319,51 @@ def convert_one(
     if problems:
         job.status = "warning"
         job.note = "; ".join(problems)
+        job.detail = messages[-3:]
     else:
         job.status = "done"
-    log.write(f"{job.path.name}: {job.status}, {result.duration:.3f}s, {result.video_frames} frames"
-              + (f" ({job.note})" if job.note else ""))
 
 
-def write_report(path: Path, jobs: list[Job]) -> None:
-    with open(path, "w", newline="", encoding="utf-8") as f:
-        w = csv.writer(f)
-        w.writerow(["file", "recording", "recorded", "source", "length", "size_mb", "status", "note"])
-        for j in jobs:
-            r = j.recording
-            w.writerow([
-                j.path.name, r.index, f"{r.date:%Y-%m-%d %H:%M:%S}" if r.date else "", r.origin,
-                short_duration(j.duration or r.duration_seconds),
-                f"{r.size_bytes / 1048576:.1f}", j.status, j.note,
-            ])
+def write_log(folder: Path, jobs: list[Job], *, version: str, source: str, kind: str,
+              camera: str, fmt: str, elapsed: float, interrupted: bool) -> Path:
+    """Add a short, readable summary of this run to "dvdcam-rip log.txt"."""
+    count = {s: sum(1 for j in jobs if j.status == s) for s in ("done", "warning", "skipped", "failed")}
+    parts = [f"{count['done'] + count['warning']} converted"]
+    if count["skipped"]:
+        parts.append(f"{count['skipped']} already done")
+    if count["failed"]:
+        parts.append(f"{count['failed']} failed")
+    result = ", ".join(parts) + f" in {short_duration(elapsed)}"
+    if interrupted:
+        result += " (stopped with Ctrl+C)"
+
+    what = "original MPEG-2 (exact copy)" if fmt == "original" else "H.264 (re-encoded)"
+    disc = f"{source}  ({kind}{', ' + camera if camera else ''})"
+    width = max((len(j.path.name) for j in jobs), default=10)
+    lines = [
+        f"==== {datetime.now():%Y-%m-%d %H:%M} " + "=" * 40,
+        f"dvdcam-rip {version}",
+        f"Disc:    {disc}",
+        f"Format:  {what}",
+        f"Result:  {result}",
+        "",
+    ]
+    for j in jobs:
+        size = f"{j.path.stat().st_size / 1048576:7.1f} MB" if j.path.exists() and j.status != "pending" else " " * 10
+        status = {
+            "done": "done",
+            "skipped": "already done",
+            "warning": f"done, but: {j.note}",
+            "failed": f"FAILED: {j.note}",
+            "pending": "not converted (stopped)",
+        }.get(j.status, j.status)
+        lines.append(f"  {j.path.name:<{width}}  {size}  {status}")
+        for msg in j.detail:
+            lines.append(f"      FFmpeg said: {msg}")
+    path = folder / LOG_NAME
+    with open(path, "a", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n\n")
+    return path
 
 
 def open_folder(path: Path) -> None:

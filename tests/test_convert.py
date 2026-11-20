@@ -20,6 +20,7 @@ from dvdcam_rip.convert import (  # noqa: E402
     OUTPUT_DIR,
     check_output_location,
     output_base,
+    write_log,
     file_name,
     parse_only,
     plan_jobs,
@@ -137,6 +138,32 @@ class DatedNameTests(unittest.TestCase):
             "Recording 03.mp4",  # length unknown: left out
             "2008-07-04 10-15-30.mp4",
         ])
+
+
+class LogTests(unittest.TestCase):
+    def test_short_readable_log_with_ffmpeg_reason_on_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            cell = Cell(1, 1, 1, Duration.from_seconds(9), 0, 9, 0, False, False)
+            jobs = plan_jobs([Recording(1, [cell]), Recording(2, [cell]), Recording(3, [cell])], 3, out)
+            jobs[0].path.write_bytes(b"x" * 2 * 1048576)
+            jobs[0].status = "done"
+            jobs[1].status, jobs[1].note = "failed", "FFmpeg stopped with an error"
+            jobs[1].detail = ["[mpeg @ 01] invalid packet", "Error while demuxing"]
+            jobs[2].status = "skipped"
+            path = write_log(out, jobs, version="9.9", source="D:\\", kind="DVD-Video", camera="CAM",
+                             fmt="h264", elapsed=75, interrupted=False)
+            text = path.read_text(encoding="utf-8")
+        self.assertEqual(path.name, "dvdcam-rip log.txt")
+        self.assertIn("Disc:    D:\\  (DVD-Video, CAM)", text)
+        self.assertIn("Format:  H.264 (re-encoded)", text)
+        self.assertIn("Result:  1 converted, 1 already done, 1 failed in 1m15s", text)
+        self.assertIn("2.0 MB  done", text)
+        self.assertIn("FAILED: FFmpeg stopped with an error", text)
+        self.assertIn("FFmpeg said: Error while demuxing", text)
+        self.assertIn("already done", text)
+        self.assertNotIn("command", text.lower())
+        self.assertLess(len(text.splitlines()), 15)
 
 
 class OutputPlaceTests(unittest.TestCase):
@@ -258,8 +285,13 @@ class CliFlowTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("3 converted", out)
         self.assertEqual(convert.call_args.kwargs["fmt"], "original")
-        self.assertTrue((self.tmp / "out" / "recordings.csv").exists())
-        self.assertTrue((self.tmp / "out" / "dvdcam-rip.log").exists())
+        files = sorted(p.name for p in (self.tmp / "out").iterdir())
+        self.assertEqual(files, ["Recording 01 (13s).mp4", "Recording 02 (40s).mp4",
+                                 "Recording 03 (7s).mp4", "dvdcam-rip log.txt"])  # one log, no CSV
+        log = (self.tmp / "out" / "dvdcam-rip log.txt").read_text(encoding="utf-8")
+        self.assertIn("Result:  3 converted", log)
+        self.assertIn("Format:  original MPEG-2 (exact copy)", log)
+        self.assertIn("Recording 02 (40s).mp4", log)
 
         code, out, convert = self.run_cli("--yes")  # running again skips everything
         self.assertIn("Nothing to do", out)
