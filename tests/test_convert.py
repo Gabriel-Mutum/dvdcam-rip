@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import io
 import os
 import sys
@@ -383,6 +385,31 @@ class EndMenuTests(CliFlowTests):
         self.assertIn("dvdcam-rip has been removed from this PC.", out)
         self.assertIn("Your videos are still in", out)
         self.assertIn("Press Enter to close this window.", self.prompts[-1])
+
+
+class CommandNameTests(unittest.TestCase):
+    """Suggested commands use the same spelling the user started with."""
+
+    def name(self, argv0: str, launcher: str | None = None) -> str:
+        env = dict(os.environ)
+        env.pop("DVDCAM_RIP_LAUNCHER", None)
+        if launcher:
+            env["DVDCAM_RIP_LAUNCHER"] = launcher
+        with mock.patch.object(cli.sys, "argv", [argv0]), mock.patch.dict(os.environ, env, clear=True):
+            return cli.command_name()
+
+    def test_spellings(self):
+        self.assertEqual(self.name(str(Path("Scripts") / "dvdcam-rip.exe")), "dvdcam-rip")
+        module = self.name(str(Path("dvdcam_rip") / "__main__.py"))
+        self.assertEqual(module, "py -m dvdcam_rip" if os.name == "nt" else "python3 -m dvdcam_rip")
+        bat = self.name(str(Path("dvdcam_rip") / "__main__.py"), launcher="bat")
+        self.assertIn("dvdcam-rip.bat", bat)
+
+    def test_declined_suggestions_use_it(self):
+        buf = io.StringIO()
+        with mock.patch.object(cli, "command_name", return_value="py -m dvdcam_rip"), redirect_stdout(buf):
+            cli.print_declined(cli.Ui(False, False), "D:\\")
+        self.assertIn('py -m dvdcam_rip "D:\\" --list --split cell', buf.getvalue())
 
 
 if __name__ == "__main__":

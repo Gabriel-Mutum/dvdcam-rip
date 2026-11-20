@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -31,7 +32,7 @@ from .convert import (
 )
 from .ffmpeg import FfmpegMissing, find_tools, has_encoder
 from .media import MediaError
-from .removal import detect_install, guide_python, remove_ffmpeg, remove_script, winget_package
+from .removal import detect_install, find_folder, guide_python, remove_ffmpeg, remove_script, winget_package
 from .recordings import SPLIT_MODES
 from .source import Media, SourceError, open_source
 from .vob import VobError
@@ -229,12 +230,23 @@ def ask_format() -> str:
         print("Please type 1 or 2.")
 
 
+def command_name() -> str:
+    """How the user started dvdcam-rip, so suggested commands work for them."""
+    if os.environ.get("DVDCAM_RIP_LAUNCHER") == "bat":
+        folder = find_folder(Path(__file__))
+        return f'"{folder / "dvdcam-rip.bat"}"' if folder else "dvdcam-rip.bat"
+    if Path(sys.argv[0]).name == "__main__.py":  # python -m dvdcam_rip
+        return "py -m dvdcam_rip" if os.name == "nt" else "python3 -m dvdcam_rip"
+    return "dvdcam-rip"
+
+
 def print_declined(ui: Ui, source: str) -> None:
+    cmd = command_name()
     ui.always("\nOK, nothing was converted and no files were written.")
     ui.always("If the list isn't what you expected:")
-    ui.always(f'  - see every piece of the disc:  dvdcam-rip "{source}" --list --split cell')
-    ui.always(f'  - find them from the video:     dvdcam-rip "{source}" --scan')
-    ui.always(f'  - convert only some of them:    dvdcam-rip "{source}" --only 3,5-7')
+    ui.always(f'  - see every piece of the disc:  {cmd} "{source}" --list --split cell')
+    ui.always(f'  - find them from the video:     {cmd} "{source}" --scan')
+    ui.always(f'  - convert only some of them:    {cmd} "{source}" --only 3,5-7')
     ui.always("  - report a problem:             https://github.com/Gabriel-Mutum/dvdcam-rip/issues")
 
 

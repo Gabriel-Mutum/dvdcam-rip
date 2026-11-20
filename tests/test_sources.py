@@ -1,5 +1,7 @@
 """Scan mode (unfinalized discs), DVD-VR discs and ISO images."""
 
+from __future__ import annotations
+
 import os
 import shutil
 import struct
