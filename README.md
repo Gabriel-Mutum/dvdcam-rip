@@ -404,6 +404,10 @@ You're welcome to fork dvdcam-rip, adapt it to your own needs, or build somethin
 - **Your camera works differently?** [Open an issue](https://github.com/Gabriel-Mutum/dvdcam-rip/issues) with the camera model and the output of `dvdcam-rip "<disc>" --list --split cell --verbose`. That's often enough to add support without sharing any video.
 - **Pull requests** are welcome. Please keep the safety rules (read-only source, never overwrite) and add a test.
 
+## How it was made
+
+dvdcam-rip was built by Gabriel Cruz with the help of [Claude](https://www.anthropic.com/claude), Anthropic's AI assistant, through Claude Code. Claude did much of the research and wrote much of the code, tests and documentation, working from his direction, his decisions and his own camcorder disc. Features were checked against that real disc wherever possible; [Supported discs](#supported-discs) says what has and hasn't been tested on real hardware.
+
 ## License
 
 dvdcam-rip is released under the [MIT License](LICENSE): you may use, copy, modify, merge, publish, distribute, sublicense and sell it, for any purpose, as long as the copyright notice and license text are kept. It comes with no warranty.
