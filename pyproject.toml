@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dvdcam-rip"
-version = "0.3.0"
+version = "0.4.0"
 description = "Turn DVD camcorder discs (DVD-Video, DVD-VR, unfinalized, ISO) into one MP4 per recording"
 readme = "README.md"
 license = "MIT"

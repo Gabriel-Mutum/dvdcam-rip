@@ -40,7 +40,7 @@ Any of these works:
 Drag the disc folder, the DVD drive or the ISO file onto **`dvdcam-rip.bat`** in the dvdcam-rip folder. A window opens and lists what's on the disc:
 
 ```
-dvdcam-rip 0.3.0
+dvdcam-rip 0.4.0
 
 Source:  C:\Users\you\Downloads\Video Camera
 Type:    DVD-Video
@@ -88,7 +88,7 @@ Choose 1 or 2 [1]:
 
 Press **Enter** (or **1**) for the exact copy, or **2** for files that play on iPhones and Macs.
 
-### 8. Wait. The folder opens when it's done.
+### 8. Wait while it converts
 
 ```
 Output folder: C:\Users\you\Downloads\dvdcam-rip\Video Camera
@@ -110,15 +110,32 @@ A list of the files is in recordings.csv; technical details are in dvdcam-rip.lo
 
 If you stop it with **Ctrl+C**, drag the disc onto `dvdcam-rip.bat` again: it skips what's already done and continues.
 
+### 9. Choose what's next
+
+```
+What next?
+  1  Convert another disc
+  2  Open the videos folder
+  3  Remove dvdcam-rip from this PC...
+  4  Exit
+```
+
+- **1 · Convert another disc**: drag the next disc folder, DVD drive or ISO into the window and press Enter (or type a path like `D:\`). Steps 5 to 9 repeat.
+- **2 · Open the videos folder**: opens it in File Explorer, then shows this menu again.
+- **3 · Remove dvdcam-rip from this PC...**: see [Removing dvdcam-rip](#removing-dvdcam-rip). Nothing is removed without asking.
+- **4 · Exit**: closes the window.
+
 ---
 
 ## Using the command line (Windows, macOS, Linux)
 
-Install once, from the dvdcam-rip folder:
+Install the `dvdcam-rip` command with pip, straight from GitHub. There's no need to download the folder first:
 
 ```bash
-python -m pip install .
+python -m pip install git+https://github.com/Gabriel-Mutum/dvdcam-rip
 ```
+
+(If you already downloaded the folder, `python -m pip install .` from inside it does the same.) To update later, run the same command with `--upgrade`.
 
 Then run `dvdcam-rip` with the disc, folder or image:
 
@@ -126,7 +143,7 @@ Then run `dvdcam-rip` with the disc, folder or image:
 dvdcam-rip "D:\"
 ```
 
-It shows the same list and questions as the drag-and-drop version. On macOS and Linux, install FFmpeg with `brew install ffmpeg` or `sudo apt install ffmpeg`, and point it at the mounted disc or a copied folder, e.g. `dvdcam-rip "/Volumes/DVD_VIDEO"`.
+It shows the same list, questions and end menu as the drag-and-drop version. On macOS and Linux, install FFmpeg with `brew install ffmpeg` or `sudo apt install ffmpeg`, and point it at the mounted disc or a copied folder, e.g. `dvdcam-rip "/Volumes/DVD_VIDEO"`.
 
 ---
 
@@ -140,13 +157,13 @@ It shows the same list and questions as the drag-and-drop version. On macOS and 
 | `-o FOLDER`, `--output FOLDER` | Where to put the videos. Default: `Downloads\dvdcam-rip\<disc name>` (or `<disc name> (H.264)`). |
 | `--format original` | Exact MPEG-2 copy, without asking. |
 | `--format h264` | iPhone-friendly H.264, without asking. |
-| `-y`, `--yes` | Ask no questions. Uses the original format unless `--format` is given. |
+| `-y`, `--yes` | Ask no questions and show no end menu. Uses the original format unless `--format` is given. |
 | `--list` | Only list the recordings, convert nothing. |
 | `--json` | Print everything known about the disc as JSON, convert nothing. |
 | `--dry-run` | Show the list, output folder and file names, then stop without writing anything. |
 | `--only LIST` | Convert only some recordings: `3`, `1,4`, `5-7`, `1,4-6`. |
 | `--overwrite` | Redo files that already exist. Without it they're skipped. |
-| `--open` | Open the output folder when finished. `dvdcam-rip.bat` always does this. |
+| `--open` | Open the output folder when finished (the end menu also offers this). |
 | `--scan` | Ignore the disc map and find recordings by scanning the video. This happens automatically for unfinalized discs. |
 | `--split chapter` | Finalized DVD-Video: one file per chapter (default; right for most camcorders). |
 | `--split vob` | Finalized DVD-Video: one file per VOB ID. |
@@ -187,7 +204,11 @@ dvdcam-rip --help
 
 `dvdcam-rip.bat` passes extra options through, so from a terminal `dvdcam-rip.bat "D:\" --format h264` works too.
 
+The end menu appears only when someone is there to answer: never with `--yes`, `--list`, `--json` or `--dry-run`, or when the input isn't a terminal.
+
 ### Exit codes (for scripts)
+
+These apply to the `dvdcam-rip` command and `python -m dvdcam_rip`. (`dvdcam-rip.bat` is meant for drag and drop and doesn't pass them on.)
 
 | Code | Meaning |
 |---|---|
@@ -258,19 +279,46 @@ When the disc stores the date and time of each recording, it's used to:
 
 ## Removing dvdcam-rip
 
-dvdcam-rip uses only Python's standard library: it installs no extra Python packages and doesn't touch system settings. To return your PC to how it was:
+dvdcam-rip uses only Python's standard library: it installs no extra Python packages and changes no system settings. The easiest way to remove it is from the end menu: choose **3 · Remove dvdcam-rip from this PC...**
 
-1. **dvdcam-rip itself:** delete the dvdcam-rip folder. If you installed the command with `python -m pip install .`, also run:
-   ```bash
-   python -m pip uninstall dvdcam-rip
-   ```
-2. **FFmpeg**, only if you installed it for this and nothing else uses it:
-   ```bash
-   winget uninstall Gyan.FFmpeg
-   ```
-3. **Python**, only if you installed it for this: *Settings → Apps → Installed apps → Python 3.x → Uninstall*.
+```
+Remove what?
+  1  dvdcam-rip only
+  2  dvdcam-rip and FFmpeg
+  3  dvdcam-rip, FFmpeg and Python (Python with your help, in Windows Settings)
+  4  Cancel
+Choose 1-4: 2
 
-Your converted videos in `Downloads\dvdcam-rip` are yours to keep or delete; nothing else is left behind.
+This will remove:
+  - the dvdcam-rip folder: C:\Users\you\Documents\dvdcam-rip
+  - FFmpeg (winget package Gyan.FFmpeg)
+Your converted videos in C:\Users\you\Downloads\dvdcam-rip and your disc files are NOT touched.
+
+Remove these? [y/N] y
+
+Removing...
+  [done]  dvdcam-rip folder deleted: C:\Users\you\Documents\dvdcam-rip
+  [done]  FFmpeg removed (winget uninstall Gyan.FFmpeg)
+
+dvdcam-rip has been removed from this PC.
+Your videos are still in C:\Users\you\Downloads\dvdcam-rip
+
+Press Enter to close this window.
+```
+
+What each part does:
+
+- **dvdcam-rip**: deletes the downloaded dvdcam-rip folder, or runs `pip uninstall dvdcam-rip` if it was installed with pip. A folder that's a git working copy (one you cloned and may have changed) is never deleted automatically; you're told to delete it yourself.
+- **FFmpeg**: removed only if it was installed with winget (`winget install Gyan.FFmpeg`, as this README suggests). An FFmpeg installed any other way is left alone, and its location is shown. Choose this only if no other program uses FFmpeg.
+- **Python**: never uninstalled automatically, because other programs may need it and it's what runs dvdcam-rip. Windows' *Installed apps* page opens instead, with instructions: search for "Python", click **⋯** next to it, then **Uninstall**.
+
+The confirmation defaults to **No**: pressing Enter by mistake removes nothing. Each step reports `[done]`, `[skipped]` (with the reason) or `[failed]` (with the error). Your videos and disc files are never touched.
+
+**By hand**, if you prefer:
+
+1. dvdcam-rip: delete its folder, or run `python -m pip uninstall dvdcam-rip` if you installed it with pip.
+2. FFmpeg: `winget uninstall Gyan.FFmpeg` (only if nothing else uses it).
+3. Python: *Settings → Apps → Installed apps → Python 3.x → Uninstall* (only if nothing else uses it).
 
 ## How it works
 

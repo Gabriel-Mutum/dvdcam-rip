@@ -2,7 +2,7 @@ import io
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import ExitStack, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
@@ -146,7 +146,9 @@ class CliFlowTests(unittest.TestCase):
     def tearDown(self):
         self._tmp.cleanup()
 
-    def run_cli(self, *args, answers=None, output=True):
+    def run_cli(self, *args, answers=None, output=True, extra=()):
+        """Run the CLI with scripted answers; once they run out, input ends
+        (as if the window were closed), which leaves any menu."""
         def fake_convert(job, *a, fmt="original", **k):
             job.status = "done"
             job.path.write_text(fmt)
@@ -154,19 +156,31 @@ class CliFlowTests(unittest.TestCase):
         def fake_existing(tools, path):
             return path.read_text()
 
+        script = iter(answers or [])
+        self.prompts = []
+
+        def fake_input(prompt=""):
+            self.prompts.append(prompt)
+            try:
+                return next(script)
+            except StopIteration:
+                raise EOFError from None
+
         fake_tools = mock.Mock(version="test", ffmpeg=Path("ffmpeg"))
         buf = io.StringIO()
         out_args = ["-o", str(self.tmp / "out")] if output else []
-        with (
-            mock.patch.object(cli, "find_tools", return_value=fake_tools),
-            mock.patch.object(cli, "has_encoder", return_value=True),
-            mock.patch.object(cli, "existing_format", side_effect=fake_existing),
-            mock.patch.object(cli, "default_output", side_effect=lambda d, f: self.tmp / f"default-{f}"),
-            mock.patch.object(cli.sys.stdin, "isatty", return_value=True),
-            mock.patch("builtins.input", side_effect=answers or EOFError),
-            mock.patch.object(cli, "convert_one", side_effect=fake_convert) as convert,
-            redirect_stdout(buf),
-        ):
+        with ExitStack() as stack:
+            stack.enter_context(mock.patch.object(cli, "find_tools", return_value=fake_tools))
+            stack.enter_context(mock.patch.object(cli, "has_encoder", return_value=True))
+            stack.enter_context(mock.patch.object(cli, "existing_format", side_effect=fake_existing))
+            stack.enter_context(mock.patch.object(
+                cli, "default_output", side_effect=lambda d, f: self.tmp / f"default-{d.name}-{f}"))
+            stack.enter_context(mock.patch.object(cli.sys.stdin, "isatty", return_value=True))
+            stack.enter_context(mock.patch("builtins.input", side_effect=fake_input))
+            convert = stack.enter_context(mock.patch.object(cli, "convert_one", side_effect=fake_convert))
+            for patch in extra:
+                stack.enter_context(patch)
+            stack.enter_context(redirect_stdout(buf))
             code = cli.main([str(self.tmp / "disc"), *out_args, *args])
         return code, buf.getvalue(), convert
 
@@ -207,7 +221,7 @@ class CliFlowTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(convert.call_args.kwargs["fmt"], "h264")
         self.assertIn("Format: H.264", out)
-        self.assertEqual(len(list((self.tmp / "default-h264").glob("*.mp4"))), 3)
+        self.assertEqual(len(list((self.tmp / "default-disc-h264").glob("*.mp4"))), 3)
 
     def test_format_flag_skips_the_question(self):
         code, out, convert = self.run_cli("--format", "h264", answers=["y"])
@@ -220,6 +234,85 @@ class CliFlowTests(unittest.TestCase):
         self.assertEqual(code, 2)
         convert.assert_not_called()
         self.assertEqual((self.tmp / "out" / "Recording 01 (13s).mp4").read_text(), "original")
+
+
+class EndMenuTests(CliFlowTests):
+    """What happens after a disc is done: the "What next?" menu."""
+
+    def menu_block(self, out: str) -> str:
+        return out[out.rindex("What next?"):]
+
+    def test_menu_options_and_exit_is_last(self):
+        code, out, _ = self.run_cli(answers=["y", "1", "4"])
+        self.assertEqual(code, 0)
+        menu = self.menu_block(out)
+        self.assertIn("1  Convert another disc", menu)
+        self.assertIn("2  Open the videos folder", menu)
+        self.assertIn("3  Remove dvdcam-rip from this PC...", menu)
+        self.assertIn("4  Exit", menu)
+
+    def test_no_menu_in_unattended_modes(self):
+        for flags in (["--yes"], ["--list"], ["--dry-run"]):
+            _, out, _ = self.run_cli(*flags)
+            self.assertNotIn("What next?", out, flags)
+
+    def test_menu_after_declining_has_no_open_folder(self):
+        _, out, _ = self.run_cli(answers=["n", "3"])
+        menu = self.menu_block(out)
+        self.assertNotIn("Open the videos folder", menu)
+        self.assertIn("3  Exit", menu)
+
+    def test_convert_another_disc(self):
+        write_disc(self.tmp / "disc2", [chapters_disc()], [(1, 1)])
+        second = f'"{self.tmp / "disc2"}"'  # dragged into the window: quoted
+        code, out, convert = self.run_cli(answers=["y", "1", "1", second, "y", "1", "4"], output=False)
+        self.assertEqual(code, 0)
+        self.assertEqual(convert.call_count, 6)
+        self.assertIn(str(self.tmp / "disc2"), out)
+
+    def test_empty_path_goes_back_to_the_menu(self):
+        _, out, convert = self.run_cli(answers=["y", "1", "1", "", "4"])
+        self.assertEqual(convert.call_count, 3)
+        self.assertEqual(out.count("What next?"), 2)
+
+    def test_open_folder(self):
+        opener = mock.patch.object(cli, "open_folder")
+        with opener as opened:
+            self.run_cli(answers=["y", "1", "2", "4"])
+        opened.assert_called_once_with(self.tmp / "out")
+
+    def test_remove_cancel_and_default_no(self):
+        _, out, _ = self.run_cli(answers=["y", "1", "3", "4", "4"])  # Cancel in the submenu
+        self.assertIn("Cancelled. Nothing was removed.", out)
+        removed = mock.patch.object(cli, "remove_script")
+        with removed as remove:
+            _, out, _ = self.run_cli(answers=["y", "1", "3", "1", "", "4"])  # Enter = no
+        remove.assert_not_called()
+        self.assertIn("Cancelled. Nothing was removed.", out)
+
+    def test_remove_everything_gives_feedback(self):
+        from dvdcam_rip.removal import Install, Step
+        patches = [
+            mock.patch.object(cli, "detect_install", return_value=Install(True, None)),
+            mock.patch.object(cli, "winget_package", return_value="Gyan.FFmpeg"),
+            mock.patch.object(cli, "remove_script",
+                              return_value=[Step("done", "dvdcam-rip package uninstalled")]),
+            mock.patch.object(cli, "remove_ffmpeg", return_value=Step("done", "FFmpeg removed")),
+            mock.patch.object(cli, "guide_python", return_value=Step("next", "Settings is open")),
+        ]
+        code, out, _ = self.run_cli(answers=["y", "1", "3", "3", "y", ""], extra=patches)
+        self.assertEqual(code, 0)
+        self.assertIn("This will remove:", out)
+        self.assertIn("the dvdcam-rip package (pip uninstall dvdcam-rip)", out)
+        self.assertIn("FFmpeg (winget package Gyan.FFmpeg)", out)
+        self.assertIn("Python: Windows Settings will open", out)
+        self.assertIn("NOT touched", out)
+        self.assertIn("[done]  dvdcam-rip package uninstalled", out)
+        self.assertIn("[done]  FFmpeg removed", out)
+        self.assertIn("[next]  Settings is open", out)
+        self.assertIn("dvdcam-rip has been removed from this PC.", out)
+        self.assertIn("Your videos are still in", out)
+        self.assertIn("Press Enter to close this window.", self.prompts[-1])
 
 
 if __name__ == "__main__":

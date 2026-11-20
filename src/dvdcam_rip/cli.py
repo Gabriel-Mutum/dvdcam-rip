@@ -30,6 +30,7 @@ from .convert import (
 )
 from .ffmpeg import FfmpegMissing, find_tools, has_encoder
 from .media import MediaError
+from .removal import detect_install, guide_python, remove_ffmpeg, remove_script, winget_package
 from .recordings import SPLIT_MODES
 from .source import Media, SourceError, open_source
 from .vob import VobError
@@ -240,26 +241,182 @@ def print_declined(ui: Ui, source: str) -> None:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     ui = Ui(args.quiet, args.verbose)
+    menu = sys.stdin.isatty() and not (args.yes or args.list or args.json or args.dry_run)
+    source = args.source
+    while True:
+        code, output = run_disc(args, ui, source)
+        if not menu or code == EXIT_INTERRUPTED:
+            return code
+        try:
+            action = end_menu(ui, output)
+        except (KeyboardInterrupt, EOFError):
+            return code
+        if action == "exit":
+            return code
+        if action == "removed":
+            return EXIT_OK
+        # "another": a new disc, with the per-disc options reset
+        source = action
+        args.only = None
+        args.output = None
+
+
+def end_menu(ui: Ui, output: Path | None) -> str:
+    """Ask what to do next. Returns "exit", "removed", or the next disc's path."""
+    while True:
+        options = [("another", "Convert another disc")]
+        if output is not None and output.is_dir():
+            options.append(("open", "Open the videos folder"))
+        options.append(("remove", "Remove dvdcam-rip from this PC..."))
+        options.append(("exit", "Exit"))
+        print("\nWhat next?")
+        for i, (_, label) in enumerate(options, start=1):
+            print(f"  {i}  {label}")
+        choice = pick(len(options))
+        key = options[choice - 1][0]
+        if key == "exit":
+            return "exit"
+        if key == "open":
+            open_folder(output)
+            print(f"Opened {output}")
+        elif key == "another":
+            nxt = ask_source()
+            if nxt:
+                print()
+                return nxt
+        elif key == "remove":
+            if removal_menu(ui, output):
+                return "removed"
+
+
+def pick(count: int, default: int | None = None) -> int:
+    hint = f" [{default}]" if default else ""
+    while True:
+        answer = input(f"Choose 1-{count}{hint}: ").strip()
+        if not answer and default:
+            return default
+        if answer.isdigit() and 1 <= int(answer) <= count:
+            return int(answer)
+        print(f"Please type a number from 1 to {count}.")
+
+
+def ask_source() -> str | None:
+    print("\nDrag the next disc folder, DVD drive or ISO file into this window and press Enter")
+    print("(or type its path, e.g. D:\\). Press Enter on its own to go back.")
+    answer = input("> ").strip().strip('"').strip("'").strip()
+    return answer or None
+
+
+REMOVE_MENU = """
+Remove what?
+  1  dvdcam-rip only
+  2  dvdcam-rip and FFmpeg
+  3  dvdcam-rip, FFmpeg and Python (Python with your help, in Windows Settings)
+  4  Cancel
+"""
+
+
+def removal_menu(ui: Ui, output: Path | None) -> bool:
+    """Returns True if something was removed (dvdcam-rip should then close)."""
+    print(REMOVE_MENU, end="")
+    level = pick(4)
+    if level == 4:
+        print("Cancelled. Nothing was removed.")
+        return False
+
+    install = detect_install()
+    try:
+        ffmpeg: Path | None = find_tools(None).ffmpeg
+    except FfmpegMissing:
+        ffmpeg = None
+
+    print("\nThis will remove:")
+    if install.pip:
+        print("  - the dvdcam-rip package (pip uninstall dvdcam-rip)")
+    if install.folder is not None:
+        if install.folder_is_git:
+            print(f"  - nothing in {install.folder}: it's a git working copy, so it will be kept")
+        else:
+            print(f"  - the dvdcam-rip folder: {install.folder}")
+    if not install.found:
+        print("  - (couldn't tell where dvdcam-rip is installed)")
+    if level >= 2:
+        package = winget_package(ffmpeg)
+        if ffmpeg is None:
+            print("  - FFmpeg: not found, nothing to remove")
+        elif package:
+            print(f"  - FFmpeg (winget package {package})")
+        else:
+            print(f"  - FFmpeg: NOT removed, it wasn't installed with winget ({ffmpeg})")
+    if level == 3:
+        print("  - Python: Windows Settings will open so you can uninstall it yourself")
+    videos = output
+    if output is not None and output.parent.name == "dvdcam-rip":
+        videos = output.parent  # the default place, holding every disc's folder
+    print("Your converted videos" + (f" in {videos}" if videos else "") + " and your disc files are NOT touched.")
+
+    if not ask_no("Remove these?"):
+        print("Cancelled. Nothing was removed.")
+        return False
+
+    print("\nRemoving...")
+    steps = remove_script(install)
+    if level >= 2:
+        steps.append(remove_ffmpeg(ffmpeg))
+    if level == 3:
+        steps.append(guide_python())
+    for step in steps:
+        print(f"  [{step.status}]  {step.text}")
+
+    failed = [s for s in steps if s.status == "failed"]
+    if failed:
+        print("\nSome things couldn't be removed; see above.")
+    else:
+        print("\ndvdcam-rip has been removed from this PC." if any(
+            s.status == "done" for s in steps) else "\nNothing needed removing.")
+    if videos:
+        print(f"Your videos are still in {videos}")
+    try:
+        input("\nPress Enter to close this window.")
+    except (EOFError, KeyboardInterrupt):
+        pass
+    return True
+
+
+def ask_no(question: str) -> bool:
+    """A yes/no question where Enter means no."""
+    while True:
+        answer = input(f"\n{question} [y/N] ").strip().lower()
+        if answer in ("y", "yes"):
+            return True
+        if answer in ("", "n", "no"):
+            return False
+        print("Please answer y or n.")
+
+
+def run_disc(args, ui: Ui, source: str) -> tuple[int, Path | None]:
+
+    output: Path | None = None
 
     # 1. Read the disc
     def scan_progress(fraction: float) -> None:
         ui.progress("Scanning the video for recordings...", fraction)
 
     try:
-        media = open_source(args.source, args.split, args.scan, progress=scan_progress)
+        media = open_source(source, args.split, args.scan, progress=scan_progress)
     except (SourceError, MediaError, VobError, OSError) as e:
         ui.error(str(e))
-        return EXIT_INPUT
+        return EXIT_INPUT, output
     if ui.tty and not ui.quiet and "scanned" in media.kind:
         print("\r" + " " * 60 + "\r", end="")
     all_recordings = media.recordings
     if not all_recordings:
         ui.error("no recordings found on this disc")
-        return EXIT_INPUT
+        return EXIT_INPUT, output
 
     if args.json:
         print(json.dumps(media_json(media), indent=2))
-        return EXIT_OK
+        return EXIT_OK, output
 
     recordings = all_recordings
     if args.only:
@@ -267,7 +424,7 @@ def main(argv: list[str] | None = None) -> int:
             wanted = set(parse_only(args.only, len(all_recordings)))
         except ValueError as e:
             ui.error(str(e))
-            return EXIT_INPUT
+            return EXIT_INPUT, output
         recordings = [r for r in all_recordings if r.index in wanted]
 
     # 2. Show what was found
@@ -282,40 +439,40 @@ def main(argv: list[str] | None = None) -> int:
         print_table(ui, plan_jobs(recordings, len(all_recordings), Path(".")), media.has_dates)
 
     if args.list:
-        return EXIT_OK
+        return EXIT_OK, output
 
     try:
         tools = find_tools(args.ffmpeg)
     except FfmpegMissing as e:
         ui.error(str(e))
-        return EXIT_NO_FFMPEG
+        return EXIT_NO_FFMPEG, output
     ui.detail(f"\nUsing FFmpeg {tools.version}: {tools.ffmpeg}")
 
     # 3. Ask: does the list look right, and which format?
     interactive = not args.yes and not args.dry_run
     if interactive and not sys.stdin.isatty():
         ui.error("not asking for confirmation without a terminal; add --yes to convert")
-        return EXIT_INPUT
+        return EXIT_INPUT, output
     fmt = args.format or "original"
     try:
         if interactive:
             n = len(recordings)
             if not ask(f"\nDoes this look right? Convert {n} recording{'s' if n != 1 else ''}?"):
-                print_declined(ui, args.source)
-                return EXIT_OK
+                print_declined(ui, source)
+                return EXIT_OK, output
             if not args.format:
                 fmt = ask_format()
     except KeyboardInterrupt:
         ui.always("\nCancelled. Nothing was written.")
-        return EXIT_INTERRUPTED
+        return EXIT_INTERRUPTED, output
     except EOFError:
         ui.always("\nNo answer was given, so nothing was written. Add --yes to convert without asking.")
-        return EXIT_INPUT
+        return EXIT_INPUT, output
 
     if fmt == "h264" and not has_encoder(tools, "libx264"):
         ui.error("this FFmpeg build has no H.264 encoder (libx264); install the full build: "
                  "winget install Gyan.FFmpeg")
-        return EXIT_NO_FFMPEG
+        return EXIT_NO_FFMPEG, output
 
     # 4. Work out the output and check it
     output = Path(args.output).expanduser() if args.output else default_output(media, fmt)
@@ -323,7 +480,7 @@ def main(argv: list[str] | None = None) -> int:
         check_output_location(output, media)
     except ValueError as e:
         ui.error(str(e))
-        return EXIT_INPUT
+        return EXIT_INPUT, output
     jobs = plan_jobs(recordings, len(all_recordings), output)
 
     clashes = []
@@ -337,7 +494,7 @@ def main(argv: list[str] | None = None) -> int:
     if clashes:
         ui.error(f"{len(clashes)} file(s) in {output} already exist in a different format "
                  f"(e.g. {clashes[0]}). Choose another folder with -o, or replace them with --overwrite.")
-        return EXIT_INPUT
+        return EXIT_INPUT, output
 
     todo = [j for j in jobs if j.status != "skipped"]
     ui.always(f"\nOutput folder: {output}")
@@ -352,25 +509,25 @@ def main(argv: list[str] | None = None) -> int:
 
     if not todo:
         ui.always("\nNothing to do: every recording is already converted.")
-        return EXIT_OK
+        return EXIT_OK, output
 
     needed = space_needed(todo, overwrite=True)
     free = free_space(output)
     if needed + SPACE_MARGIN > free:
         ui.error(f"not enough free space in {output.anchor or output}: "
                  f"need about {fmt_size(needed + SPACE_MARGIN)}, only {fmt_size(free)} free")
-        return EXIT_INPUT
+        return EXIT_INPUT, output
 
     if args.dry_run:
         ui.always("\nDry run: nothing was written.")
-        return EXIT_OK
+        return EXIT_OK, output
 
     # 5. Convert
     try:
         output.mkdir(parents=True, exist_ok=True)
     except OSError as e:
         ui.error(f"can't create the output folder {output}: {e}")
-        return EXIT_INPUT
+        return EXIT_INPUT, output
     log = Log(output / "dvdcam-rip.log")
     log.write(f"dvdcam-rip {__version__}, FFmpeg {tools.version}, source {media.location}, "
               f"{media.kind}, camera '{media.camera}', {len(todo)} to convert")
@@ -448,8 +605,8 @@ def main(argv: list[str] | None = None) -> int:
         open_folder(output)
 
     if interrupted:
-        return EXIT_INTERRUPTED
-    return EXIT_FAILED if count["failed"] else EXIT_OK
+        return EXIT_INTERRUPTED, output
+    return (EXIT_FAILED if count["failed"] else EXIT_OK), output
 
 
 if __name__ == "__main__":
